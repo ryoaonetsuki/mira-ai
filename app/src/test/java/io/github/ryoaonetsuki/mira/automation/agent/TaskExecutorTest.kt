@@ -388,7 +388,7 @@ class TaskExecutorTest {
         )
 
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
-        val result = executor.replaySkillDirect(saved)
+        val result = executor.replaySkillDirect(requireNotNull(saved))
         assertEquals(TaskStatus.SUCCESS, result.status)
         assertTrue(fakePort.actionsPerformed.contains("openApp:youtube"))
     }
@@ -856,7 +856,7 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val result = executor.replaySkillDirect(savedSkill)
+        val result = executor.replaySkillDirect(requireNotNull(savedSkill))
         assertEquals(TaskStatus.FAILED, result.status)
         assertTrue("Diagnosis must name step 1: ${result.message}", result.message.contains("step 1"))
 
@@ -877,7 +877,7 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val result = executor.replaySkillDirect(savedSkill)
+        val result = executor.replaySkillDirect(requireNotNull(savedSkill))
         assertEquals(TaskStatus.FAILED, result.status)
         assertTrue("Diagnosis must name step 1: ${result.message}", result.message.contains("step 1"))
 
@@ -1281,7 +1281,7 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val result = executor.replaySkillDirect(saved)
+        val result = executor.replaySkillDirect(requireNotNull(saved))
         assertEquals(TaskStatus.FAILED, result.status)
         assertTrue("Diagnosis must name step 1: ${result.message}", result.message.contains("step 1"))
         assertNotNull("Skill must be retained after a failed replay", skills.findMatch("yt"))
@@ -2380,7 +2380,6 @@ class TaskExecutorTest {
     fun testAU_M6_ReplayResolvesRecordedField() = runBlocking {
         val port = FakeAutomationPort(
             serviceEnabled = true,
-            inputFocusedState = false,
             screenNodes = listOf(
                 ScreenNode(
                     index = 0,

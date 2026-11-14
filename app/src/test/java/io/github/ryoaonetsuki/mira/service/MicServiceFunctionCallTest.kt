@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -24,6 +25,14 @@ import org.junit.Test
  * (node-tree text always, screenshot attached at shouldAttachScreenshot decision points).
  */
 class MicServiceFunctionCallTest {
+
+    // GoalToolTracker is a global singleton with a 30-call cap per goal; without a
+    // reset, executeFunctionCall calls from earlier tests in this class exhaust the
+    // cap and every later call returns CapExceeded (openApp never invoked).
+    @Before
+    fun resetGoalToolTracker() {
+        GoalToolTracker.reset()
+    }
 
     private class TestAutomationPort(
         var currentPkg: String = "com.google.android.apps.nexuslauncher",
@@ -1332,28 +1341,29 @@ class MicServiceFunctionCallTest {
 
     @Test
     fun testTypeText_RepeatWithin45s_FieldLacksText_Executes() = runBlocking {
+        val originalNodes = listOf(
+            ScreenNode(
+                index = 0,
+                text = "Search YouTube",
+                contentDescription = "Search button",
+                className = "android.widget.Button",
+                viewId = "yt_search",
+                isClickable = true,
+                isEditable = false,
+                isScrollable = false,
+                isCheckable = false,
+                isEnabled = true,
+                left = 10,
+                top = 10,
+                right = 100,
+                bottom = 50,
+                centerX = 55,
+                centerY = 30
+            )
+        )
         val fakePort = TestAutomationPort(
             currentPkg = "com.google.android.youtube",
-            testNodes = listOf(
-                ScreenNode(
-                    index = 0,
-                    text = "Search YouTube",
-                    contentDescription = "Search button",
-                    className = "android.widget.Button",
-                    viewId = "yt_search",
-                    isClickable = true,
-                    isEditable = false,
-                    isScrollable = false,
-                    isCheckable = false,
-                    isEnabled = true,
-                    left = 10,
-                    top = 10,
-                    right = 100,
-                    bottom = 50,
-                    centerX = 55,
-                    centerY = 30
-                )
-            )
+            testNodes = originalNodes
         )
 
         // First type_text executes
@@ -1369,7 +1379,11 @@ class MicServiceFunctionCallTest {
         assertEquals(true, (res1.value["success"] as? Value.Bool)?.value)
         assertEquals("Bangla songs", fakePort.lastTypedText)
 
-        // Second type_text with same text while screen does NOT contain it must execute
+        // Second type_text with same text while screen does NOT contain it must execute.
+        // The fake's typeText rewrites every node's text to the typed text, so the
+        // screen must be reset to the original nodes first — otherwise the dedup
+        // correctly sees the text already on screen and skips the repeat.
+        fakePort.testNodes = originalNodes
         fakePort.lastTypedText = null
         val res2 = executeFunctionCall(
             automationPort = fakePort,

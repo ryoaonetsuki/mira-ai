@@ -9,7 +9,9 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import io.github.ryoaonetsuki.mira.data.local.MiraDatabase
+import io.github.ryoaonetsuki.mira.data.local.dao.WhatsAppGuardDao
 import io.github.ryoaonetsuki.mira.data.local.entities.NotificationEntity
+import io.github.ryoaonetsuki.mira.data.local.entities.WhatsAppGuardEntity
 import io.github.ryoaonetsuki.mira.data.preferences.UserPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +21,20 @@ import kotlinx.coroutines.launch
 class MiraNotificationListener : NotificationListenerService() {
 
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val guard = WhatsAppAutoReplyGuard()
+    private lateinit var guard: WhatsAppAutoReplyGuard
+
+    override fun onCreate() {
+        super.onCreate()
+        val db = MiraDatabase.getInstance(applicationContext)
+        guard = WhatsAppAutoReplyGuard(db.whatsAppGuardDao())
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        scope.launch {
+            guard.load()
+        }
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
@@ -45,8 +60,24 @@ class MiraNotificationListener : NotificationListenerService() {
 
                 if (title.isBlank() || text.isBlank()) return@launch
 
-                // Don't reply to group summaries or empty messages
-                if (title.contains("messages from") || title.contains("WhatsApp")) return@launch
+                // Skip group notifications — auto-replying into a group is wrong (1:1 only)
+                val messagingStyle = notification.messagingStyle
+                if (messagingStyle is Notification.MessagingStyle && messagingStyle.isGroupConversation) {
+                    Log.w(TAG, "Skipping group conversation notification: $title")
+                    return@launch
+                }
+                if (sbn.isGroup) {
+                    Log.w(TAG, "Skipping group notification (sbn.isGroup): $title")
+                    return@launch
+                }
+                if (extras.getBoolean(Notification.EXTRA_IS_GROUP_SUMMARY, false)) {
+                    Log.w(TAG, "Skipping group summary notification (EXTRA_IS_GROUP_SUMMARY): $title")
+                    return@launch
+                }
+                if (notification.isGroupSummary) {
+                    Log.w(TAG, "Skipping group summary notification (isGroupSummary): $title")
+                    return@launch
+                }
 
                 val template = userPrefs.autoReplyTemplateFlow.first()
 
@@ -59,10 +90,21 @@ class MiraNotificationListener : NotificationListenerService() {
                     text
                 }
 
-                if (!guard.shouldReply(title, latestIncomingText, template, sbn.key, sbn.postTime, System.currentTimeMillis())) return@launch
+                // Skip if latest text contains template or template contains latest text (echo/self-sent)
+                val trimmedText = latestIncomingText?.trim()
+                val trimmedTemplate = template.trim()
+                if (trimmedText.isNullOrBlank()) return@launch
+                if (trimmedTemplate.isBlank()) return@launch
+                if (trimmedText.contains(trimmedTemplate) || trimmedTemplate.contains(trimmedText)) return@launch
+
+                val now = System.currentTimeMillis()
+
+                // Pure check — does not record state
+                if (!guard.canReply(title, latestIncomingText, template, sbn.key, sbn.postTime, now)) return@launch
 
                 // Look for wearable action / quick reply action with RemoteInput
                 val actions = notification.actions ?: return@launch
+                var replySent = false
                 for (action in actions) {
                     val remoteInputs = action.remoteInputs
                     if (remoteInputs != null && remoteInputs.isNotEmpty()) {
@@ -74,20 +116,30 @@ class MiraNotificationListener : NotificationListenerService() {
 
                             action.actionIntent.send(applicationContext, 0, replyIntent)
                             Log.i(TAG, "Sent WhatsApp auto-reply to '$title': $template")
-
-                            // Save notification log to Room
-                            val db = MiraDatabase.getInstance(applicationContext)
-                            db.notificationDao().insertNotification(
-                                NotificationEntity(
-                                    title = "WhatsApp Auto-Reply",
-                                    message = "Replied to $title: \"$template\"",
-                                    type = "info"
-                                )
-                            )
-                            return@launch
+                            replySent = true
+                            break
                         }
                     }
+                    if (replySent) break
                 }
+
+                if (!replySent) {
+                    Log.w(TAG, "No reply action with RemoteInput found for notification '$title' — nothing recorded")
+                    return@launch
+                }
+
+                // Record only after the reply was actually sent
+                guard.recordReply(title, latestIncomingText, sbn.key, now)
+
+                // Save notification log to Room
+                val db = MiraDatabase.getInstance(applicationContext)
+                db.notificationDao().insertNotification(
+                    NotificationEntity(
+                        title = "WhatsApp Auto-Reply",
+                        message = "Replied to $title: \"$template\"",
+                        type = "info"
+                    )
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to auto-reply to WhatsApp notification: ${e.message}", e)
             }
@@ -99,7 +151,7 @@ class MiraNotificationListener : NotificationListenerService() {
     }
 }
 
-class WhatsAppAutoReplyGuard {
+class WhatsAppAutoReplyGuard(private val dao: WhatsAppGuardDao) {
     companion object {
         const val RATE_LIMIT_MS = 60_000L
         const val DEDUP_WINDOW_MS = 300_000L
@@ -109,7 +161,22 @@ class WhatsAppAutoReplyGuard {
     private val repliedKeys = mutableMapOf<String, Long>()
     private val conversationLastReply = mutableMapOf<String, Long>()
 
-    fun shouldReply(
+    suspend fun load() {
+        val now = System.currentTimeMillis()
+        val cutoff = now - DEDUP_WINDOW_MS
+        dao.pruneOlderThan(cutoff)
+        val all = dao.findAll()
+        for (entity in all) {
+            val key = "${entity.conversation}|${entity.latestIncomingText}|${entity.notificationKey}"
+            repliedKeys[key] = entity.lastRepliedAt
+            val current = conversationLastReply[entity.conversation] ?: 0L
+            if (entity.lastRepliedAt > current) {
+                conversationLastReply[entity.conversation] = entity.lastRepliedAt
+            }
+        }
+    }
+
+    fun canReply(
         conversation: String,
         latestIncomingText: String?,
         template: String,
@@ -121,19 +188,16 @@ class WhatsAppAutoReplyGuard {
         if (latestIncomingText.isNullOrBlank()) return false
         // (b) blank template → false
         if (template.isBlank()) return false
-        // (c) latestIncomingText.trim() == template.trim() → false
-        if (latestIncomingText.trim() == template.trim()) return false
+        // (c) latestIncomingText contains template or template contains latestIncomingText → false
+        val trimmedText = latestIncomingText.trim()
+        val trimmedTemplate = template.trim()
+        if (trimmedText.contains(trimmedTemplate) || trimmedTemplate.contains(trimmedText)) return false
         // (d) stale notification → false
         if (nowMs - postTimeMs > RECENCY_MS || postTimeMs > nowMs) return false
 
-        val key = "$conversation|${latestIncomingText.trim()}|$notificationKey"
+        val key = "$conversation|$trimmedText|$notificationKey"
 
         return synchronized(this) {
-            // Prune entries older than DEDUP_WINDOW_MS
-            val cutoff = nowMs - DEDUP_WINDOW_MS
-            repliedKeys.entries.removeIf { it.value < cutoff }
-            conversationLastReply.entries.removeIf { it.value < cutoff }
-
             // (e) dedup: same key replied within DEDUP_WINDOW_MS → false
             val lastReplied = repliedKeys[key]
             if (lastReplied != null && nowMs - lastReplied <= DEDUP_WINDOW_MS) return false
@@ -142,10 +206,36 @@ class WhatsAppAutoReplyGuard {
             val lastConversationReply = conversationLastReply[conversation]
             if (lastConversationReply != null && nowMs - lastConversationReply <= RATE_LIMIT_MS) return false
 
-            // Record this reply
-            repliedKeys[key] = nowMs
-            conversationLastReply[conversation] = nowMs
             true
         }
+    }
+
+    suspend fun recordReply(
+        conversation: String,
+        latestIncomingText: String?,
+        notificationKey: String,
+        nowMs: Long
+    ) {
+        if (latestIncomingText.isNullOrBlank()) return
+
+        val trimmedText = latestIncomingText.trim()
+        val key = "$conversation|$trimmedText|$notificationKey"
+
+        synchronized(this) {
+            repliedKeys[key] = nowMs
+            val current = conversationLastReply[conversation] ?: 0L
+            if (nowMs > current) {
+                conversationLastReply[conversation] = nowMs
+            }
+        }
+
+        dao.insertOrUpdate(
+            WhatsAppGuardEntity(
+                conversation = conversation,
+                latestIncomingText = trimmedText,
+                notificationKey = notificationKey,
+                lastRepliedAt = nowMs
+            )
+        )
     }
 }

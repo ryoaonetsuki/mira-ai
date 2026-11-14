@@ -221,4 +221,82 @@ class TaskSupervisorTest {
     sup.markFinished(key, false, 2000)
     assertNull(sup.cachedResult(key))
   }
+
+  @Test
+  fun `web_search within 45s is EXECUTE (no post-success dedup)`() {
+    val sup = TaskSupervisor()
+    val key = sup.canonicalKey("web_search", mapOf("query" to "pizza"), null, null)!!
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 1000))
+    sup.markFinished(key, true, 2000)
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 2000 + 1000))
+  }
+
+  @Test
+  fun `tap_number within 45s is EXECUTE (no post-success dedup)`() {
+    val sup = TaskSupervisor()
+    val key = sup.canonicalKey("tap_number", mapOf("number" to 1), "com.app", null)!!
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 1000))
+    sup.markFinished(key, true, 2000)
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 2000 + 1000))
+  }
+
+  @Test
+  fun `run_skill within 45s is EXECUTE (no post-success dedup)`() {
+    val sup = TaskSupervisor()
+    val key = sup.canonicalKey("run_skill", mapOf("goal" to "do something"), null, null)!!
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 1000))
+    sup.markFinished(key, true, 2000)
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 2000 + 1000))
+  }
+
+  @Test
+  fun `click_at within 45s is EXECUTE (no post-success dedup)`() {
+    val sup = TaskSupervisor()
+    val key = sup.canonicalKey("click_at", mapOf("x" to 100, "y" to 200), "com.app", null)!!
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 1000))
+    sup.markFinished(key, true, 2000)
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 2000 + 1000))
+  }
+
+  @Test
+  fun `canonicalKey uses live currentPackage for click_text`() {
+    val sup = TaskSupervisor()
+    val key1 = sup.canonicalKey("click_text", mapOf("text" to "Submit"), "com.app.one", null)
+    val key2 = sup.canonicalKey("click_text", mapOf("text" to "Submit"), "com.app.two", null)
+    assertNotNull(key1)
+    assertNotEquals(key1, key2)
+  }
+
+  @Test
+  fun `canonicalKey uses live currentPackage for type_text`() {
+    val sup = TaskSupervisor()
+    val key1 = sup.canonicalKey("type_text", mapOf("text" to "hello"), "com.app.one", null)
+    val key2 = sup.canonicalKey("type_text", mapOf("text" to "hello"), "com.app.two", null)
+    assertNotNull(key1)
+    assertNotEquals(key1, key2)
+  }
+
+  @Test
+  fun `unparseable turn dissimilar to running goal classifies as NEW_TASK`() {
+    val sup = TaskSupervisor()
+    assertEquals(TaskSupervisor.TurnClass.NEW_TASK, sup.classifyTurn("do something completely different", "open youtube", null, null, null))
+  }
+
+  @Test
+  fun `same-target OpenApp with different goal text classifies as NEW_TASK`() {
+    val sup = TaskSupervisor()
+    assertEquals(TaskSupervisor.TurnClass.NEW_TASK, sup.classifyTurn("open netflix", "open youtube", "com.netflix", "OpenApp", "com.netflix"))
+  }
+
+  @Test
+  fun `genuine follow-up scroll within same task classifies as FOLLOW_UP`() {
+    val sup = TaskSupervisor()
+    assertEquals(TaskSupervisor.TurnClass.FOLLOW_UP, sup.classifyTurn("scroll down", "open youtube", null, "Scroll", null))
+  }
+
+  @Test
+  fun `genuine follow-up tap within same task classifies as FOLLOW_UP`() {
+    val sup = TaskSupervisor()
+    assertEquals(TaskSupervisor.TurnClass.FOLLOW_UP, sup.classifyTurn("click submit", "open youtube", null, "TapLabel", null))
+  }
 }

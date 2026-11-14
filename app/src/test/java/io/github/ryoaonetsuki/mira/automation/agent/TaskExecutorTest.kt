@@ -894,7 +894,7 @@ class TaskExecutorTest {
         // Step 1: open_app youtube (critical -> has effect)
         // Step 2: click_text StaleFeedItem (non-critical -> dispatches ok, but NO effect on screen)
         // Step 3: click_text Library (non-critical -> has effect)
-        // 1 of 3 skipped (<= 50%) -> overall replay SUCCEEDS!
+        // 1 of 3 skipped (a minority) -> overall replay is PARTIAL (AU-M4), never SUCCESS.
         val fakePort = FakeAutomationPort(
             serviceEnabled = true,
             noEffectClickTexts = setOf("StaleFeedItem")
@@ -911,8 +911,10 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val ok = executor.replaySkill(skill)
-        assertTrue("Replay must succeed when 1 of 3 non-critical steps has no effect and is skipped", ok)
+        // AU-M4: a replay that skipped a step is never a full success — 1 of 3 skipped
+        // (a minority) is PARTIAL, not SUCCESS and not FAILED.
+        val result = executor.replaySkillDirect(skill)
+        assertEquals(TaskStatus.PARTIAL, result.status)
         // StaleFeedItem was tried twice (initial + 1 retry), Library once -> total 3 clickText calls
         val clickCalls = fakePort.actionsPerformed.filter { it.startsWith("clickText:") }
         assertEquals(listOf("clickText:StaleFeedItem", "clickText:StaleFeedItem", "clickText:Library"), clickCalls)
@@ -1867,7 +1869,10 @@ class TaskExecutorTest {
         )
 
         val result = executor.replaySkillDirect(feedScrollSkill)
-        assertEquals("Skill with 5 consecutive scrolls must SUCCEED", TaskStatus.SUCCESS, result.status)
+        // AU-M3/AU-M4: scrolls only succeed when the screen actually changes. All 5
+        // scrolls had no effect, so every step is skipped — the replay did nothing and
+        // fails outright (half or more skipped); it must not report SUCCESS.
+        assertEquals("Skill with 5 consecutive no-effect scrolls must FAIL, not succeed", TaskStatus.FAILED, result.status)
         val scrollDispatches = feedPort.actionsPerformed.filter { it == "scroll:down" }
         assertEquals("All 5 scroll actions must execute without being aborted by loop guard", 5, scrollDispatches.size)
 
@@ -2760,7 +2765,28 @@ class TaskExecutorTest {
 
     @Test
     fun testA_M13_UnknownReadbackOnPasswordField_Succeeds() = runBlocking {
-        val port = object : FakeAutomationPort() {
+        // The password field's text reads back blank (masked); the flow accepts the
+        // blank readback because the field node reports isPassword = true (A-M13).
+        val passwordNode = ScreenNode(
+            index = 0,
+            text = "",
+            contentDescription = "Password",
+            className = "android.widget.EditText",
+            viewId = "com.example:id/password",
+            isClickable = true,
+            isEditable = true,
+            isPassword = true,
+            isScrollable = false,
+            isCheckable = false,
+            isEnabled = true,
+            left = 10,
+            top = 10,
+            right = 100,
+            bottom = 50,
+            centerX = 55,
+            centerY = 30
+        )
+        val port = object : FakeAutomationPort(screenNodes = listOf(passwordNode)) {
             override fun setTextOnFocused(text: String): Boolean = true
             override fun getFocusedText(): String? = null
         }

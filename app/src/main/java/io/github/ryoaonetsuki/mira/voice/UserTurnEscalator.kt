@@ -55,6 +55,6 @@ class UserTurnEscalator(
     }
 
     companion object {
-        const val DEFAULT_ESCALATION_TIMEOUT_MS: Long = 10_000L
+        const val DEFAULT_ESCALATION_TIMEOUT_MS: Long = 25_000L
     }
 }

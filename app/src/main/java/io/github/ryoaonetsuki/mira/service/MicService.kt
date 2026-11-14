@@ -947,8 +947,7 @@ class MicService : Service() {
             resumptionStore = resumptionStore,
             listener = createSessionListener(),
             externalScope = serviceScope,
-            echoGuardEnabled = echoGuard,
-            initialMicEnabled = !isMicMuted
+            echoGuardEnabled = echoGuard
         )
 
         if (generation != sessionGenerationToken.get()) {
@@ -1042,7 +1041,7 @@ class MicService : Service() {
                         // the restart backoff; the liveness clock restarts now.
                         autoRestartAttempt = 0
                         _reconnectAttempt.value = 0
-                        noteAudioFrame()
+                        noteMicFrame()
                         noteServerActivity()
                         connectsThisCall++
                         Log.i(TAG, "MIRA_LIVE_VOICE: Connected (connect #$connectsThisCall of this call, voice=$cachedVoiceName)")
@@ -2127,6 +2126,11 @@ private suspend fun executeFunctionCallInternal(
 ): Value.Object {
     val normName = name.lowercase(Locale.ROOT)
 
+    // Top-level function: no access to MicService's automationBridge field —
+    // resolve the singleton bridge from the passed context instead, so the
+    // per-call executor is still registered for stop/cancel (AU-B2).
+    val bridge = context?.let { MiraAutomationBridge.getInstance(it) }
+
     val skills = skillsService ?: context?.let {
         try {
             SkillMemoryService.getInstance(it)
@@ -2154,9 +2158,9 @@ private suspend fun executeFunctionCallInternal(
                     appKnowledge = appKnowledge,
                     tapNumbersEnabled = tapNumbersEnabled
                 )
-                automationBridge.registerExecutor(executor)
+                bridge?.registerExecutor(executor)
                 val replayResult = executor.replaySkillDirect(matchedSkill)
-                automationBridge.unregisterExecutor(executor)
+                bridge?.unregisterExecutor(executor)
                 if (replayResult.status == TaskStatus.SUCCESS) {
                     val postPackage = automationPort.getCurrentPackage().orEmpty()
                     val postNodes = automationPort.dumpScreen()
@@ -3170,9 +3174,9 @@ private suspend fun executeFunctionCallInternal(
                 appKnowledge = appKnowledge,
                 tapNumbersEnabled = tapNumbersEnabled
             )
-            automationBridge.registerExecutor(executor)
+            bridge?.registerExecutor(executor)
             val replayResult = executor.replaySkillDirect(matchedSkill)
-            automationBridge.unregisterExecutor(executor)
+            bridge?.unregisterExecutor(executor)
             val postPackage = automationPort.getCurrentPackage().orEmpty()
             val postNodes = automationPort.dumpScreen()
             return buildActionResult(

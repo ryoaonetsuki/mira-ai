@@ -320,6 +320,7 @@ class MiraAccessibilityService : AccessibilityService() {
                     "viewId" to viewId,
                     "isClickable" to node.isClickable,
                     "isEditable" to node.isEditable,
+                    "isPassword" to node.isPassword,
                     "isScrollable" to node.isScrollable,
                     "isCheckable" to node.isCheckable,
                     "isEnabled" to node.isEnabled,

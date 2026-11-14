@@ -79,6 +79,9 @@ class VisionFirstPerception(
 
     fun recordFailedAttempt(signature: Int, target: String) {
         val norm = normalizeTarget(target).lowercase(Locale.ROOT)
+        if (failedAttempts.size >= 200) {
+            failedAttempts.clear()
+        }
         failedAttempts.add(signature to norm)
     }
 

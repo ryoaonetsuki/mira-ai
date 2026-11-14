@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Delete files from ryoaonetsuki/mira-ai-voice-assistant via GitHub Contents
+"""Delete files from ryoaonetsuki/mira-ai via GitHub Contents
 API DELETE (push.py only creates/updates). Usage:
   python3 delete_files.py "path/one.kt" "path/two.kt" --message "msg"
 Auth: stored custom.github-pat credential via authd surrogate (same pattern
@@ -10,7 +10,7 @@ sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/templates/skill/bin"
 from dynamic_credentials import add_surrogate_to_request, read_response_body, DynamicCredentialError
 
 BASE = "https://api.github.com"
-REPO = "ryoaonetsuki/mira-ai-voice-assistant"
+REPO = "ryoaonetsuki/mira-ai"
 BRANCH = "main"
 CREDENTIAL = "custom.github-pat"
 

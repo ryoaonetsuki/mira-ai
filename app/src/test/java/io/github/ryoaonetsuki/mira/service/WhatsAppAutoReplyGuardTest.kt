@@ -28,7 +28,7 @@ class FakeWhatsAppGuardDao : WhatsAppGuardDao {
     }
 
     override suspend fun pruneOlderThan(cutoff: Long) {
-        store.removeIf { _, v -> v.lastRepliedAt < cutoff }
+        store.entries.removeIf { (_, v) -> v.lastRepliedAt < cutoff }
     }
 
     override suspend fun deleteAll() {

@@ -141,4 +141,24 @@ class ChatStreamingPipelineTest {
         assertFalse(ConnectorIntentHandler.isConnectorCommand("what is the capital of france"))
         assertFalse(ConnectorIntentHandler.isConnectorCommand(""))
     }
+
+    @Test
+    fun testIsMapsCommand_ExplicitPlaceSearchOnly() {
+        // Ordinary "where is" questions must NOT be treated as maps commands
+        assertFalse(ConnectorIntentHandler.isConnectorCommand("where is my phone"))
+        assertFalse(ConnectorIntentHandler.isConnectorCommand("কোথায় আছো"))
+        // Explicit map/place phrasing IS a maps command
+        assertTrue(ConnectorIntentHandler.isConnectorCommand("where is the nearest pharmacy on the map"))
+        assertTrue(ConnectorIntentHandler.isConnectorCommand("find place near me"))
+        assertTrue(ConnectorIntentHandler.isConnectorCommand("show on map"))
+    }
+
+    @Test
+    fun testIsJustCodeRequest_OnModelReplyDoesNotForceCodeOnly() {
+        // isJustCodeRequest detects keywords in any string, but processAndSaveGeneratedContent
+        // no longer calls it on the model reply (raw). It relies only on the isJustCode flag
+        // computed from the user's prompt.
+        assertTrue(WebsiteProjectManager.isJustCodeRequest("Here is the code you asked for, just code it yourself"))
+        assertTrue(WebsiteProjectManager.isJustCodeRequest("I've written the code, just code it and run it"))
+    }
 }

@@ -29,8 +29,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.util.Log
 import androidx.core.content.ContextCompat
+import io.github.ryoaonetsuki.mira.BuildConfig
 import io.github.ryoaonetsuki.mira.R
+import io.github.ryoaonetsuki.mira.backend.LicenceGateOutcome
 import io.github.ryoaonetsuki.mira.backend.RemoteAppConfig
+import io.github.ryoaonetsuki.mira.backend.isVersionOlder
+import io.github.ryoaonetsuki.mira.backend.resolveLicenceGate
 import io.github.ryoaonetsuki.mira.backend.SupabaseClient
 import io.github.ryoaonetsuki.mira.data.preferences.SecurePreferences
 import io.github.ryoaonetsuki.mira.ui.components.MiraButton
@@ -39,20 +43,6 @@ import io.github.ryoaonetsuki.mira.ui.navigation.Screen
 import io.github.ryoaonetsuki.mira.ui.theme.LocalMiraPalette
 import kotlin.Result
 import kotlinx.coroutines.delay
-
-private fun isVersionOlder(current: String, target: String): Boolean {
-    if (target.isBlank()) return false
-    val currParts = current.split(".").mapNotNull { it.toIntOrNull() }
-    val targetParts = target.split(".").mapNotNull { it.toIntOrNull() }
-    val maxLen = maxOf(currParts.size, targetParts.size)
-    for (i in 0 until maxLen) {
-        val c = currParts.getOrElse(i) { 0 }
-        val t = targetParts.getOrElse(i) { 0 }
-        if (t > c) return true
-        if (c > t) return false
-    }
-    return false
-}
 
 @Composable
 fun SplashScreen(
@@ -74,6 +64,7 @@ fun SplashScreen(
 
     var blockingTitle by remember { mutableStateOf<String?>(null) }
     var blockingMessage by remember { mutableStateOf<String?>(null) }
+    var isForcedUpdate by remember { mutableStateOf(false) }
     var retryTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(retryTrigger) {
@@ -117,31 +108,36 @@ fun SplashScreen(
         }
 
         // 3. Forced Update Check
-        val currentAppVersion = "1.0.0"
+        val currentAppVersion = BuildConfig.VERSION_NAME
         if (isVersionOlder(currentAppVersion, config.forcedUpdateVersion)) {
             blockingTitle = "Update Required"
             blockingMessage = config.forcedUpdateMessage.ifBlank {
                 "A required update (${config.forcedUpdateVersion}) is available. Please update the app to continue."
             }
+            isForcedUpdate = true
             return@LaunchedEffect
         }
 
         // 3b. Licence gate
         if (config.licenceEnabled) {
             val licenceKey = securePrefs.getLicenceKey()
-            if (licenceKey.isNullOrBlank()) {
-                blockingTitle = "Licence Required"
-                blockingMessage = "A licence is required to use Mira. Enter your licence key in Personal Profile settings, then tap Retry."
-                return@LaunchedEffect
-            }
-            val validation = supabaseClient.validateLicence(licenceKey)
-            if (validation.isSuccess && validation.getOrNull() != true) {
-                blockingTitle = "Licence Invalid"
-                blockingMessage = "This licence key is not valid. Enter a valid licence key in Personal Profile settings, then tap Retry."
-                return@LaunchedEffect
-            }
-            if (validation.isFailure) {
-                Log.w("SplashScreen", "Licence validation failed, failing open: ${validation.exceptionOrNull()?.message}")
+            val validation = if (licenceKey.isNullOrBlank()) null else supabaseClient.validateLicence(licenceKey)
+            when (resolveLicenceGate(config.licenceEnabled, licenceKey, validation)) {
+                LicenceGateOutcome.BLOCK_NO_KEY -> {
+                    blockingTitle = "Licence Required"
+                    blockingMessage = "A licence is required to use Mira. Enter your licence key in Personal Profile settings, then tap Retry."
+                    return@LaunchedEffect
+                }
+                LicenceGateOutcome.BLOCK_INVALID -> {
+                    blockingTitle = "Licence Invalid"
+                    blockingMessage = "This licence key is not valid. Enter a valid licence key in Personal Profile settings, then tap Retry."
+                    return@LaunchedEffect
+                }
+                LicenceGateOutcome.PASS -> {
+                    if (validation?.isFailure == true) {
+                        Log.w("SplashScreen", "Licence validation failed, failing open: ${validation.exceptionOrNull()?.message}")
+                    }
+                }
             }
         }
 
@@ -279,6 +275,14 @@ fun SplashScreen(
                         lineHeight = 18.sp
                     )
                     Spacer(modifier = Modifier.height(14.dp))
+                    if (isForcedUpdate) {
+                        MiraButton(
+                            text = "Update now",
+                            onClick = { onNavigate("update") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     MiraButton(
                         text = "Retry Connection",
                         onClick = { retryTrigger++ },
@@ -295,7 +299,7 @@ fun SplashScreen(
                 .padding(bottom = 24.dp)
         ) {
             Text(
-                text = "v1.0.0 (Build 1)",
+                text = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
                 color = palette.textSecondary.copy(alpha = 0.7f),

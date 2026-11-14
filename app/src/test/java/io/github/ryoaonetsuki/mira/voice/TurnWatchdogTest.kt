@@ -97,12 +97,12 @@ class TurnWatchdogTest {
         )
         assertEquals(WatchdogAction.INJECT_LIVE_NUDGE, actionLiveConnectedAuto)
 
-        // While Live is disconnected, fallback TTS only if user initiated
+        // While Live is disconnected, the direct path runs with NO TTS (VO-M6: TTS lives only in the voice preview)
         val actionDisconnectedUser = WatchdogActionResolver.resolve(
             isLiveConnected = false,
             isUserInitiated = true
         )
-        assertEquals(WatchdogAction.RUN_DIRECT_PATH_WITH_TTS, actionDisconnectedUser)
+        assertEquals(WatchdogAction.RUN_DIRECT_PATH_NO_TTS, actionDisconnectedUser)
 
         val actionDisconnectedAuto = WatchdogActionResolver.resolve(
             isLiveConnected = false,

@@ -1,5 +1,6 @@
 package io.github.ryoaonetsuki.mira.network
 
+import io.github.ryoaonetsuki.mira.data.local.entities.ChatMessageEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -590,5 +591,47 @@ class GeminiRestClientTest {
         assertEquals(0, elements[0].yPx)
         assertEquals(720, elements[1].xPx)
         assertEquals(1600, elements[1].yPx)
+    }
+
+    @Test
+    fun testIsChatSearchWorthy_PlainIsQuestion_ReturnsFalse() {
+        assertEquals(false, MiraChatSearchHeuristic.isChatSearchWorthy("This is my favourite song"))
+    }
+
+    @Test
+    fun testIsChatSearchWorthy_TimeSensitiveQuestion_ReturnsTrue() {
+        assertEquals(true, MiraChatSearchHeuristic.isChatSearchWorthy("What is the weather in Dhaka today"))
+    }
+
+    @Test
+    fun testStripThinkBlocks_RemovesMultiLineThinkBlock() {
+        val text = "Hello <think>reasoning" + System.lineSeparator() + "more reasoning</think> world"
+        assertEquals("Hello  world", stripThinkBlocks(text))
+    }
+
+    @Test
+    fun testStripThinkBlocks_LeavesPlainTextUnchanged() {
+        assertEquals("Hello world", stripThinkBlocks("Hello world"))
+    }
+
+    @Test
+    fun testTrimHistoryByTokenBudget_KeepsLatestUserMessage() {
+        val history = listOf(
+            ChatMessageEntity(conversationId = "c1", role = "user", content = "old question"),
+            ChatMessageEntity(conversationId = "c1", role = "model", content = "x".repeat(40000)),
+            ChatMessageEntity(conversationId = "c1", role = "user", content = "latest question")
+        )
+        val trimmed = trimHistoryByTokenBudget(history, maxTokens = 100)
+        assertEquals("latest question", trimmed.last().content)
+        assertTrue(trimmed.size < history.size)
+    }
+
+    @Test
+    fun testTrimHistoryByTokenBudget_ReturnsAllWhenUnderBudget() {
+        val history = listOf(
+            ChatMessageEntity(conversationId = "c1", role = "user", content = "hi"),
+            ChatMessageEntity(conversationId = "c1", role = "model", content = "hello")
+        )
+        assertEquals(history.size, trimHistoryByTokenBudget(history, maxTokens = 8000).size)
     }
 }

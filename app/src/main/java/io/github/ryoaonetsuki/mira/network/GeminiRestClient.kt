@@ -26,6 +26,8 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import io.github.ryoaonetsuki.mira.automation.agent.DEFAULT_SCREEN_WIDTH
+import io.github.ryoaonetsuki.mira.automation.agent.DEFAULT_SCREEN_HEIGHT
 
 /**
  * Strips all whitespace/newlines and drops a leading "Bearer " prefix if present.
@@ -41,6 +43,43 @@ fun normalizeApiKey(raw: String): String {
         trimmed
     }
     return withoutBearer.replace(Regex("\\s+"), "")
+}
+
+/**
+ * Removesblocks from text (dot-matches-all regex).
+ * Used to strip thinking tokens from history before sending to the model.
+ */
+fun stripThinkBlocks(text: String): String {
+    return text.replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "").trim()
+}
+
+/**
+ * Trims history to fit within an approximate token budget (~4 chars per token).
+ * Always keeps the latest user message. Keeps the most recent turns that fit
+ * within the budget, dropping older messages first.
+ */
+fun trimHistoryByTokenBudget(history: List<ChatMessageEntity>, maxTokens: Int = 8000): List<ChatMessageEntity> {
+    val maxChars = maxTokens * 4
+    if (history.isEmpty()) return history
+
+    val result = mutableListOf<ChatMessageEntity>()
+    var totalChars = 0
+    val lastUserIdx = history.indexOfLast { it.role == "user" }
+
+    // Iterate from newest to oldest, always keep the latest user message
+    for (i in history.indices.reversed()) {
+        val msg = history[i]
+        val msgChars = msg.content.length
+        val isLatestUser = i == lastUserIdx
+        if (isLatestUser || totalChars + msgChars <= maxChars) {
+            result.add(0, msg)
+            totalChars += msgChars
+        } else {
+            break
+        }
+    }
+
+    return result
 }
 
 sealed class KeyValidationOutcome {
@@ -366,7 +405,7 @@ object MiraChatSearchHeuristic {
 
     private val INTERROGATIVE_TRIGGERS = listOf(
         "what", "who", "when", "where", "why", "how to", "how", "which",
-        "is", "are", "can", "should", "best", "versus", "vs", "compare", "recommend",
+        "best", "versus", "vs", "compare", "recommend",
         "কি", "কী", "কে", "কখন", "কোথায়", "কেন", "কিভাবে", "কোন", "সেরা",
         "kivabe", "kokhon", "kothay", "kokon", "kemon", "keno", "sera", "best", "ki", "ke", "kon"
     )
@@ -377,8 +416,7 @@ object MiraChatSearchHeuristic {
         if (isBuildRequest(text)) return true
         val lower = text.lowercase()
         val words = lower.split(Regex("[\\s,?.!;:'\"()]+"))
-        if (words.any { it in INTERROGATIVE_TRIGGERS }) return true
-        return INTERROGATIVE_TRIGGERS.any { lower.contains(it) }
+        return words.any { it in INTERROGATIVE_TRIGGERS }
     }
 
     val ACKNOWLEDGEMENT_PHRASES: Map<String, String>
@@ -800,56 +838,67 @@ class GeminiRestClient(
         }
         val allSources = mutableListOf<GroundingSource>()
 
-        // 1. Research-first for build requests (gated on shouldSearch)
-        if (shouldSearch && isBuild && lastUserMessage.isNotBlank()) {
-            val coreTopic = extractCoreTopic(lastUserMessage)
-            val query1 = lastUserMessage
-            val query2 = "$coreTopic modern website design 2026 best practices examples"
-            val res1 = FreeWebSearch.search(query1, maxResults = 5)
-            val res2 = if (query2 != query1) FreeWebSearch.search(query2, maxResults = 5) else emptyList()
-            val mergedBuildResults = (res1 + res2).distinctBy { it.url }.take(6)
-            if (mergedBuildResults.isNotEmpty()) {
-                val researchBlock = buildString {
-                    appendLine("[Design research — live web results for this build (searched just now):")
-                    mergedBuildResults.forEachIndexed { idx, res ->
-                        appendLine("${idx + 1}. ${res.title} — ${res.snippet} (${res.url})")
+        // Pre-search phase: hard 5s total budget, proceed without results on timeout
+        val searchOutcome = withTimeoutOrNull(5_000L) {
+            var sysPrompt = effectiveSysPrompt
+            var updatedHistory = history
+
+            // 1. Research-first for build requests (gated on shouldSearch)
+            if (shouldSearch && isBuild && lastUserMessage.isNotBlank()) {
+                val coreTopic = extractCoreTopic(lastUserMessage)
+                val query1 = lastUserMessage
+                val query2 = "$coreTopic modern website design 2026 best practices examples"
+                val mergedBuildResults = coroutineScope {
+                    val deferred1 = async { FreeWebSearch.search(query1, maxResults = 5) }
+                    val deferred2 = async { if (query2 != query1) FreeWebSearch.search(query2, maxResults = 5) else emptyList() }
+                    (deferred1.await() + deferred2.await()).distinctBy { it.url }.take(6)
+                }
+                if (mergedBuildResults.isNotEmpty()) {
+                    val researchBlock = buildString {
+                        appendLine("[Design research — live web results for this build (searched just now):")
+                        mergedBuildResults.forEachIndexed { idx, res ->
+                            appendLine("${idx + 1}. ${res.title} — ${res.snippet} (${res.url})")
+                        }
+                        appendLine("Study these before building. Think step-by-step about layout, palette, typography, sections and real content, then build a premium multi-page site. Do not copy any site's branding or copyrighted text/images.]")
                     }
-                    appendLine("Study these before building. Think step-by-step about layout, palette, typography, sections and real content, then build a premium multi-page site. Do not copy any site's branding or copyrighted text/images.]")
+                    sysPrompt = if (sysPrompt.isBlank()) {
+                        researchBlock
+                    } else {
+                        researchBlock + "\n\n" + sysPrompt
+                    }
+                    allSources.addAll(mergedBuildResults.map { GroundingSource(title = it.title, url = it.url) })
                 }
-                effectiveSysPrompt = if (effectiveSysPrompt.isBlank()) {
-                    researchBlock
-                } else {
-                    researchBlock + "\n\n" + effectiveSysPrompt
-                }
-                allSources.addAll(mergedBuildResults.map { GroundingSource(title = it.title, url = it.url) })
             }
+
+            // 2. Embedded web search for time-sensitive or search-worthy queries
+            if (shouldSearch && lastUserMessage.isNotBlank()) {
+                val maxRes = if (isChatCall) 8 else 5
+                val searchResults = FreeWebSearch.search(lastUserMessage, maxResults = maxRes)
+                if (searchResults.isNotEmpty()) {
+                    val detectedLanguage = Regex("""(?:Reply ONLY in|Language rule: Reply ONLY in|RESPOND IN)\s+([^\n.]+)""", RegexOption.IGNORE_CASE)
+                        .find(sysPrompt)?.groupValues?.get(1)?.trim()
+                    val dateLine = currentDateTimeLine(detectedLanguage ?: "Bangla (Bengali)")
+                    val searchBlock = FreeWebSearch.formatForModel(searchResults, dateLine)
+                    val newLastMsg = "$lastUserMessage\n\n$searchBlock"
+                    val lastUserIdx = history.indexOfLast { it.role == "user" }
+                    if (lastUserIdx != -1) {
+                        val mutableHist = history.toMutableList()
+                        mutableHist[lastUserIdx] = history[lastUserIdx].copy(content = newLastMsg)
+                        updatedHistory = mutableHist
+                    }
+                    allSources.addAll(searchResults.map { GroundingSource(title = it.title, url = it.url) })
+                }
+            }
+
+            Triple(updatedHistory, sysPrompt, allSources.toList())
         }
 
-        // 2. Embedded web search for time-sensitive or search-worthy queries
-        var effectiveHistory = history
-        if (shouldSearch && lastUserMessage.isNotBlank()) {
-            val maxRes = if (isChatCall) 8 else 5
-            val searchResults = FreeWebSearch.search(lastUserMessage, maxResults = maxRes)
-            if (searchResults.isNotEmpty()) {
-                val detectedLanguage = Regex("""(?:Reply ONLY in|Language rule: Reply ONLY in|RESPOND IN)\s+([^\n.]+)""", RegexOption.IGNORE_CASE)
-                    .find(effectiveSysPrompt)?.groupValues?.get(1)?.trim()
-                val dateLine = currentDateTimeLine(detectedLanguage ?: "Bangla (Bengali)")
-                val searchBlock = FreeWebSearch.formatForModel(searchResults, dateLine)
-                val newLastMsg = "$lastUserMessage\n\n$searchBlock"
-                val lastUserIdx = history.indexOfLast { it.role == "user" }
-                if (lastUserIdx != -1) {
-                    val mutableHist = history.toMutableList()
-                    mutableHist[lastUserIdx] = history[lastUserIdx].copy(content = newLastMsg)
-                    effectiveHistory = mutableHist
-                }
-                allSources.addAll(searchResults.map { GroundingSource(title = it.title, url = it.url) })
-            }
-        }
+        val (effectiveHistory, finalSysPrompt, finalSources) = searchOutcome ?: Triple(history, effectiveSysPrompt, emptyList())
 
         PreparedChatInput(
             effectiveHistory = effectiveHistory,
-            effectiveSystemPrompt = effectiveSysPrompt,
-            sources = allSources.distinctBy { it.url }
+            effectiveSystemPrompt = finalSysPrompt,
+            sources = finalSources.distinctBy { it.url }
         )
     }
 
@@ -972,6 +1021,9 @@ class GeminiRestClient(
             enableThinking = enableThinking
         )
 
+        val sanitizedHistory = prepared.effectiveHistory.map { it.copy(content = stripThinkBlocks(it.content)) }
+        val trimmedHistory = trimHistoryByTokenBudget(sanitizedHistory)
+
         if (prepared.sources.isNotEmpty()) {
             onSourcesReceived?.invoke(prepared.sources.take(4))
         }
@@ -1009,7 +1061,7 @@ class GeminiRestClient(
                 }
 
                 val contents = JSONArray()
-                val effectiveTurns = prepared.effectiveHistory.takeLast(20)
+                val effectiveTurns = trimmedHistory.takeLast(20)
                 val lastUserIndex = effectiveTurns.indexOfLast { it.role == "user" }
 
                 for ((idx, msg) in effectiveTurns.withIndex()) {
@@ -1093,7 +1145,7 @@ class GeminiRestClient(
                         .post(root.toString().toRequestBody(jsonMediaType))
                         .build()
                 } else {
-                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$m:streamGenerateContent?alt=sse&key=$key"
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$m:streamGenerateContent?alt=sse"
                     Request.Builder().url(url).header("x-goog-api-key", key).post(root.toString().toRequestBody(jsonMediaType)).build()
                 }
 
@@ -1255,6 +1307,8 @@ class GeminiRestClient(
         httpClient: OkHttpClient = client
     ): Result<GroundedChatResult> {
         return try {
+            val sanitizedHistory = history.map { it.copy(content = stripThinkBlocks(it.content)) }
+            val workingHistory = trimHistoryByTokenBudget(sanitizedHistory)
             val root = JSONObject()
 
             // System instructions
@@ -1268,7 +1322,7 @@ class GeminiRestClient(
 
             // Contents array
             val contents = JSONArray()
-            val effectiveTurns = history.takeLast(20)
+            val effectiveTurns = workingHistory.takeLast(20)
             val lastUserIndex = effectiveTurns.indexOfLast { it.role == "user" }
 
             for ((idx, msg) in effectiveTurns.withIndex()) {
@@ -1367,7 +1421,7 @@ class GeminiRestClient(
                     .post(root.toString().toRequestBody(jsonMediaType))
                     .build()
             } else {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
                 Request.Builder().url(url).header("x-goog-api-key", apiKey).post(root.toString().toRequestBody(jsonMediaType)).build()
             }
 
@@ -1487,8 +1541,8 @@ class GeminiRestClient(
         imageBytes: ByteArray,
         targetDescription: String,
         nodeDump: String = "",
-        screenWidth: Int = 1080,
-        screenHeight: Int = 2400,
+        screenWidth: Int = DEFAULT_SCREEN_WIDTH,
+        screenHeight: Int = DEFAULT_SCREEN_HEIGHT,
         useServerProxy: Boolean = false,
         model: String = "gemini-3.8-flash"
     ): Result<Pair<Int, Int>> = withContext(Dispatchers.IO) {
@@ -1553,8 +1607,8 @@ class GeminiRestClient(
         apiKey: String,
         imageBytes: ByteArray,
         nodeDump: String = "",
-        screenWidth: Int = 1080,
-        screenHeight: Int = 2400,
+        screenWidth: Int = DEFAULT_SCREEN_WIDTH,
+        screenHeight: Int = DEFAULT_SCREEN_HEIGHT,
         goal: String = "",
         useServerProxy: Boolean = false,
         model: String = "gemini-3.8-flash"
@@ -1632,8 +1686,8 @@ class GeminiRestClient(
 
         fun parseVisionCoordinates(
             response: String,
-            screenWidth: Int = 1080,
-            screenHeight: Int = 2400
+            screenWidth: Int = DEFAULT_SCREEN_WIDTH,
+            screenHeight: Int = DEFAULT_SCREEN_HEIGHT
         ): Pair<Int, Int>? {
             val clean = response.replace("```json", "").replace("```", "").trim()
             var parsed: Pair<Int, Int>? = null
@@ -1732,8 +1786,8 @@ class GeminiRestClient(
 
         fun parseVisionElements(
             response: String,
-            screenWidth: Int = 1080,
-            screenHeight: Int = 2400
+            screenWidth: Int = DEFAULT_SCREEN_WIDTH,
+            screenHeight: Int = DEFAULT_SCREEN_HEIGHT
         ): List<VisionElement>? {
             val clean = response.replace("```json", "").replace("```", "").trim()
             if (clean.isBlank()) return null

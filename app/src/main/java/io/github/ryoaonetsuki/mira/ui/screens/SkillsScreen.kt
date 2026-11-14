@@ -365,6 +365,12 @@ fun SkillsScreen(
                             onCheckedChange = { SkillSettings.getInstance(context).set(it) }
                         )
                     }
+                    Text(
+                        text = "Controls automatic skills only. Tap-to-Run on this screen still works when OFF.",
+                        fontSize = 11.sp,
+                        color = palette.textSecondary,
+                        modifier = Modifier.padding(top = 4.dp, start = 14.dp, end = 14.dp, bottom = 8.dp)
+                    )
                 }
             }
 
@@ -1120,7 +1126,7 @@ fun SkillsScreen(
                         if (!skillsEnabled) return@Button
                         val name = macroNameInput.trim()
                         if (name.isNotBlank() && recordedStepsToSave.isNotEmpty()) {
-                            skillMemoryService.saveOrUpdate(name, recordedStepsToSave)
+                            val saved = skillMemoryService.saveOrUpdate(name, recordedStepsToSave)
                         }
                         showSaveMacroDialog = false
                     },

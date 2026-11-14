@@ -46,6 +46,8 @@ class MiraAutomationBridge(
     @Volatile
     private var activeExecutor: TaskExecutor? = null
 
+    private val registeredExecutors = mutableSetOf<TaskExecutor>()
+
     @Volatile
     var runningGoal: String? = null
         private set
@@ -106,6 +108,19 @@ class MiraAutomationBridge(
     fun cancel() {
         synchronized(stateLock) {
             activeExecutor?.cancel()
+            registeredExecutors.forEach { it.cancel() }
+        }
+    }
+
+    fun registerExecutor(executor: TaskExecutor) {
+        synchronized(stateLock) {
+            registeredExecutors.add(executor)
+        }
+    }
+
+    fun unregisterExecutor(executor: TaskExecutor) {
+        synchronized(stateLock) {
+            registeredExecutors.remove(executor)
         }
     }
 

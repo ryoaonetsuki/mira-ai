@@ -273,4 +273,54 @@ class MiraImageApiClientTest {
 
         assertTrue("CancellationException must be propagated when caller cancels", caughtCancellation)
     }
+
+    @Test
+    fun testGenerateImage_Http502_ReturnsTransientServerError() = runBlocking {
+        val okClient = createMockClient { _, _, _ ->
+            Response.Builder()
+                .request(okhttp3.Request.Builder().url("https://mira-image-api.salman-dev.workers.dev/generate").build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(502)
+                .message("Bad Gateway")
+                .body("""{"ok":false,"error":"bad gateway"}""".toResponseBody(jsonMedia))
+                .build()
+        }
+
+        val apiClient = MiraImageApiClient(
+            client = okClient,
+            apiKeyProvider = { "valid-key" }
+        )
+
+        val result = apiClient.generateImage("test prompt")
+        assertTrue(result is MiraImageResult.Failure)
+        val failure = result as MiraImageResult.Failure
+        assertEquals(502, failure.statusCode)
+        assertFalse(failure.isQuotaOrRateLimit)
+        assertEquals("Transient server error (HTTP 502). Please try again.", failure.message)
+    }
+
+    @Test
+    fun testGenerateImage_Http429_ReturnsQuotaRateLimit() = runBlocking {
+        val okClient = createMockClient { _, _, _ ->
+            Response.Builder()
+                .request(okhttp3.Request.Builder().url("https://mira-image-api.salman-dev.workers.dev/generate").build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(429)
+                .message("Too Many Requests")
+                .body("""{"ok":false,"error":"rate limit exceeded"}""".toResponseBody(jsonMedia))
+                .build()
+        }
+
+        val apiClient = MiraImageApiClient(
+            client = okClient,
+            apiKeyProvider = { "valid-key" }
+        )
+
+        val result = apiClient.generateImage("test prompt")
+        assertTrue(result is MiraImageResult.Failure)
+        val failure = result as MiraImageResult.Failure
+        assertEquals(429, failure.statusCode)
+        assertTrue(failure.isQuotaOrRateLimit)
+        assertEquals("rate limit exceeded", failure.message)
+    }
 }

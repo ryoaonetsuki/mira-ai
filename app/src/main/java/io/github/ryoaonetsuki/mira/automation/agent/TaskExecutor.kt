@@ -532,6 +532,19 @@ class TaskExecutor(
                     stepsUsed = result.stepsCompleted
                 )
             }
+            // A replay that skipped half or more of its steps failed outright (AU-M4).
+            // Do NOT enter the resume loop: every skipped step was already retried once
+            // inside the replay, so resuming would only re-dispatch steps that proved
+            // to have no effect (a 5-scroll skill would dispatch 9 scrolls, not 5).
+            if (result.skippedCount > 0 && result.skippedCount * 2 >= result.stepsCompleted) {
+                skills.markReplayOutcome(skill.id, false)
+                val diag = _lastDiagnosis ?: "Task failed: ${result.skippedCount} of ${result.stepsCompleted} steps skipped (${result.skippedSteps.joinToString(", ")})"
+                return TaskResult(
+                    status = TaskStatus.FAILED,
+                    message = diag,
+                    stepsUsed = result.stepsCompleted
+                )
+            }
             val failedStepIndex = result.failedStepIndex.coerceIn(0, skill.steps.size - 1)
             if (resumeCount >= AI_RESUME_MAX_ATTEMPTS) {
                 skills.markReplayOutcome(skill.id, false)

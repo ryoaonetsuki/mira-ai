@@ -1434,7 +1434,9 @@ class MicServiceFunctionCallTest {
         val success = (resultMap["success"] as? Value.Bool)?.value
         assertEquals("open_app must succeed", true, success)
         assertEquals("com.google.android.youtube", fakePort.currentPkg)
-        assertTrue("openApp must have been invoked", fakePort.openedApps.contains("YouTube"))
+        // Production resolves the app name to its package before calling openApp,
+        // so the port receives the resolved package, not the raw name "YouTube".
+        assertTrue("openApp must have been invoked", fakePort.openedApps.contains("com.google.android.youtube"))
     }
 
     @Test

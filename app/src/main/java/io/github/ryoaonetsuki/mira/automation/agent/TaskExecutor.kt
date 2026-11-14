@@ -519,9 +519,12 @@ class TaskExecutor(
                     stepsUsed = skill.steps.size
                 )
             }
-            // Partial success: a minority of non-critical steps skipped (AU-M4: a replay
-            // that skipped steps is never a full success; half or more skipped fails outright).
-            if (result.skippedCount > 0 && result.skippedCount * 2 < skill.steps.size) {
+            // Partial success: a minority of the steps THIS run attempted were skipped
+            // (AU-M4: a replay that skipped steps is never a full success; half or more
+            // skipped fails outright). The denominator is the run's own attempted count,
+            // not the skill size — a resumed run replays only a tail, so comparing its
+            // skips against the full skill would misreport a failed tail as partial.
+            if (result.skippedCount > 0 && result.skippedCount * 2 < result.stepsCompleted) {
                 skills.markReplayOutcome(skill.id, false)
                 return TaskResult(
                     status = TaskStatus.PARTIAL,

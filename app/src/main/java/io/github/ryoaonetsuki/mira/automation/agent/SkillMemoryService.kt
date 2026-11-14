@@ -160,13 +160,13 @@ class SkillMemoryService(
    * Stores (or refreshes) the action sequence for [goal]. Terminal `done`
    * steps are stripped since replay ends when the list is exhausted.
    */
-  fun saveOrUpdate(goal: String, steps: List<TaskStep>): Skill = synchronized(lock) {
+  fun saveOrUpdate(goal: String, steps: List<TaskStep>): Skill? = synchronized(lock) {
     if (!isSkillsEnabled()) {
       val skills = load()
       val normalized = Skill.normalize(goal)
       val existingIndex = skills.indexOfFirst { it.normalizedGoal == normalized }
       if (existingIndex >= 0) return skills[existingIndex]
-      return Skill(goal = goal, steps = emptyList())
+      return null
     }
     val skills = load()
     val cleaned = steps.filter { it.action != TaskStep.ACTION_DONE && it.isSupported }

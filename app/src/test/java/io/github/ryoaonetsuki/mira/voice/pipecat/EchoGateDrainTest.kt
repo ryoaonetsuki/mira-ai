@@ -97,9 +97,9 @@ class EchoGateDrainTest {
         val effectiveBot = router.getEffectiveBotLevel(1200L)
         assertEquals(0.4f, effectiveBot, 0.0001f)
 
-        // Mic hears echo (e.g. 0.3f < 0.4 * 1.0 + 0.02 = 0.42): frame must be dropped!
+        // Mic hears echo (e.g. 0.1f < 0.4 * 0.3 + 0.02 = 0.14): frame must be dropped!
         val shouldForwardEcho = EchoGate.shouldForward(
-            micRms = 0.3f,
+            micRms = 0.1f,
             botLevel = effectiveBot,
             isBotTalking = router.isBotTalking(),
             echoGuardEnabled = true

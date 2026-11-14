@@ -1,12 +1,18 @@
 package io.github.ryoaonetsuki.mira.service
 
 import ai.pipecat.client.types.Value
+import io.github.ryoaonetsuki.mira.automation.MiraAutomationBridge
 import io.github.ryoaonetsuki.mira.automation.agent.AutomationPort
+import io.github.ryoaonetsuki.mira.automation.agent.TaskExecutor
+import io.github.ryoaonetsuki.mira.automation.agent.TaskStatus
 import io.github.ryoaonetsuki.mira.automation.agent.ScreenNode
 import io.github.ryoaonetsuki.mira.automation.agent.Skill
 import io.github.ryoaonetsuki.mira.automation.agent.SkillMemoryService
 import io.github.ryoaonetsuki.mira.automation.agent.SkillStore
 import io.github.ryoaonetsuki.mira.automation.agent.TaskStep
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -1381,7 +1387,7 @@ class MicServiceFunctionCallTest {
     @Test
     fun testStopCancelsInFlightFunctionCallJob() = runBlocking {
         val service = MicService()
-        val job = service.serviceScope.launch {
+        val job = launch {
             delay(5000)
         }
         service.functionCallJobs.add(job)
@@ -1425,39 +1431,40 @@ class MicServiceFunctionCallTest {
 
     @Test
     fun testStopCancelsRegisteredExecutor() = runBlocking {
-        val service = MicService()
-        val mockExecutor = object : TaskExecutor(
-            automation = object : AutomationPort {
-                override fun isServiceEnabled(): Boolean = true
-                override fun dumpScreen(): List<ScreenNode> = emptyList()
-                override fun formatNodes(nodes: List<ScreenNode>): String = ""
-                override fun getCompressedScreenDescription(nodes: List<ScreenNode>, goal: String): String = ""
-                override fun clickText(text: String, nodes: List<ScreenNode>): Boolean = false
-                override fun clickAt(x: Float, y: Float): Boolean = false
-                override fun typeText(text: String): Boolean = false
-                override fun pressEnter(): Boolean = false
-                override fun scroll(direction: String): Boolean = false
-                override fun swipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long): Boolean = false
-                override fun pressBack(): Boolean = false
-                override fun pressHome(): Boolean = false
-                override fun openApp(query: String): String? = null
-                override fun getCurrentPackage(): String = ""
-                override suspend fun takeScreenshotJpeg(maxWidthPx: Int): ByteArray? = null
-            },
+        // AU-B2: executors registered with the automation bridge are cancelled
+        // when the bridge is cancelled (stop / call end). The bridge's internal
+        // constructor (context = null) lets this run on the JVM.
+        val bridge = MiraAutomationBridge(context = null)
+        val fakePort = TestAutomationPort()
+        val executor = TaskExecutor(
+            automation = fakePort,
             skills = SkillMemoryService(InMemorySkillStore()),
             stepDelayMs = 0,
             apiKeyProvider = { "" },
             visionLocator = { _, _ -> null },
             appKnowledge = null,
             tapNumbersEnabled = false
-        ) {
-            override fun replaySkillDirect(skill: Skill): io.github.ryoaonetsuki.mira.automation.agent.TaskStatus.Result {
-                return io.github.ryoaonetsuki.mira.automation.agent.TaskStatus.Result(io.github.ryoaonetsuki.mira.automation.agent.TaskStatus.RUNNING, "running", 0)
-            }
+        )
+        bridge.registerExecutor(executor)
+        val skill = Skill(
+            goal = "slow skill",
+            steps = listOf(
+                TaskStep(action = TaskStep.ACTION_WAIT, params = mapOf("ms" to 2000)),
+                TaskStep(action = TaskStep.ACTION_WAIT, params = mapOf("ms" to 2000)),
+                TaskStep(action = TaskStep.ACTION_WAIT, params = mapOf("ms" to 2000)),
+                TaskStep(action = TaskStep.ACTION_WAIT, params = mapOf("ms" to 2000)),
+                TaskStep(action = TaskStep.ACTION_WAIT, params = mapOf("ms" to 2000))
+            )
+        )
+        val replay = async { executor.replaySkillDirect(skill) }
+        // Cancel repeatedly: the executor only observes the flag between steps,
+        // and resets it on entry, so a single cancel could land too early.
+        repeat(20) {
+            bridge.cancel()
+            delay(200)
         }
-        service.automationBridge.registerExecutor(mockExecutor)
-        service.automationBridge.cancel()
-        // Executor should have been cancelled via bridge
-        assertTrue(service.automationBridge.isRunning == false || true) // bridge cancel reached registered executor
+        val result = replay.await()
+        assertEquals(TaskStatus.CANCELLED, result.status)
+        bridge.unregisterExecutor(executor)
     }
 }

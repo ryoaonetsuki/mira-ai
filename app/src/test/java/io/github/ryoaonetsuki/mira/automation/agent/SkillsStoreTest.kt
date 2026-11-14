@@ -47,7 +47,7 @@ class SkillsStoreTest {
         val service = SkillMemoryService(store)
 
         val step = TaskStep(action = TaskStep.ACTION_OPEN_APP, params = mapOf("query" to "YouTube"))
-        val created = service.saveOrUpdate("open youtube", listOf(step))
+        val created = requireNotNull(service.saveOrUpdate("open youtube", listOf(step)))
         assertEquals("open youtube", created.goal)
 
         val renamed = service.renameSkill(created.id, "launch youtube video")
@@ -76,7 +76,7 @@ class SkillsStoreTest {
         val service = SkillMemoryService(store)
 
         val step = TaskStep(action = TaskStep.ACTION_OPEN_APP, params = mapOf("query" to "WhatsApp"))
-        val skill = service.saveOrUpdate("message mom on whatsapp", listOf(step))
+        val skill = requireNotNull(service.saveOrUpdate("message mom on whatsapp", listOf(step)))
 
         // Verify skill exists and matches
         assertEquals(1, service.getAllSkills().size)
@@ -104,7 +104,7 @@ class SkillsStoreTest {
         assertFalse(service.renameSkill("non-existent-id", "new goal"))
 
         val step = TaskStep(action = TaskStep.ACTION_PRESS_HOME)
-        val skill = service.saveOrUpdate("go home", listOf(step))
+        val skill = requireNotNull(service.saveOrUpdate("go home", listOf(step)))
 
         assertFalse(service.renameSkill(skill.id, "   "))
         assertEquals("go home", service.getAllSkills()[0].goal)

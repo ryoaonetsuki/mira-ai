@@ -86,6 +86,9 @@ class JarvisExtrasTest {
         override fun pressHome(): Boolean {
             dispatchedActions.add("pressHome")
             onActionDispatched?.invoke("pressHome")
+            // Pressing Home puts the launcher in the foreground — the replay's
+            // post-step check verifies the package changed to a launcher package.
+            currentPkg = "com.android.launcher3"
             return true
         }
 

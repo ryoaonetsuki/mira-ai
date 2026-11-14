@@ -207,8 +207,9 @@ class MiraImageApiClientTest {
         assertTrue(result is MiraImageResult.Failure)
         val failure = result as MiraImageResult.Failure
         assertEquals(502, failure.statusCode)
-        assertTrue(failure.isQuotaOrRateLimit)
-        assertTrue(failure.message.contains("image generation failed"))
+        // BU-M15: HTTP 502 is a transient server error, NOT quota/rate-limit (only 429 is).
+        assertFalse(failure.isQuotaOrRateLimit)
+        assertTrue(failure.message.contains("Transient server error"))
     }
 
     @Test

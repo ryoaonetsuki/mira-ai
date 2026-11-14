@@ -87,7 +87,7 @@ class TaskSupervisor {
 
     if (key in running) {
       DedupDecision.ALREADY_RUNNING
-    } else if (toolName !in listOf("scroll", "click_text") && key in done &&
+    } else if (toolName in listOf("open_app", "type_text") && key in done &&
                nowMs - done[key]!! <= DONE_WINDOW_MS) {
       DedupDecision.ALREADY_DONE
     } else {
@@ -104,7 +104,12 @@ class TaskSupervisor {
     running.remove(key)
     if (success) {
       done[key] = nowMs
-      result?.let { cachedResults[key] = it }
+      result?.let { value ->
+        if (cachedResults.size >= 50) {
+          cachedResults.remove(cachedResults.keys.first())
+        }
+        cachedResults[key] = value
+      }
     } else {
       cachedResults.remove(key)
     }
@@ -128,6 +133,22 @@ class TaskSupervisor {
     val keys = running.keys.toList()
     running.clear()
     keys
+  }
+
+  /**
+   * Clears any prior DONE/cached result for [key] so it can be re-executed.
+   */
+  fun clearDone(key: String) = synchronized(this) {
+    done.remove(key)
+    cachedResults.remove(key)
+  }
+
+  /**
+   * Marks [key] as RUNNING at [nowMs] without checking DONE state.
+   * Used when post-state verification overrides an ALREADY_DONE decision.
+   */
+  fun reserveRunning(key: String, nowMs: Long) = synchronized(this) {
+    running[key] = nowMs
   }
 
   /**
@@ -163,11 +184,10 @@ class TaskSupervisor {
     when (parsedKind) {
       "Scroll", "TapLabel", "TapNumber", "PressBack" -> return TurnClass.FOLLOW_UP
       "OpenApp" -> {
-        if (parsedTarget == runningTarget) return TurnClass.FOLLOW_UP
         return TurnClass.NEW_TASK
       }
       "Search", "Dial" -> return TurnClass.NEW_TASK
-      null -> return TurnClass.FOLLOW_UP
+      null -> return TurnClass.NEW_TASK
     }
 
     return TurnClass.FOLLOW_UP

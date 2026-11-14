@@ -100,7 +100,7 @@ class VoiceMemoryToolsTest {
         assertNotNull(forgetRes)
         assertEquals(Value.Bool(true), forgetRes?.value?.get("success"))
         val forgetText = (forgetRes?.value?.get("result") as? Value.Str)?.value ?: ""
-        assertTrue(forgetText.contains("Deleted 1 saved memories."))
+        assertTrue(forgetText.contains("Deleted 1 saved memory."))
         assertEquals(0, db.memoryDao().getMemoryCount())
 
         // Forget non-existing

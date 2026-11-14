@@ -23,6 +23,7 @@ import io.github.ryoaonetsuki.mira.ui.components.AppDrawer
 import io.github.ryoaonetsuki.mira.ui.components.AppTopBar
 import io.github.ryoaonetsuki.mira.ui.screens.*
 import io.github.ryoaonetsuki.mira.ui.screens.settings.*
+import io.github.ryoaonetsuki.mira.SharedTextHolder
 import io.github.ryoaonetsuki.mira.ui.theme.LocalMiraPalette
 import kotlinx.coroutines.launch
 
@@ -57,10 +58,13 @@ fun MiraNavGraph(
         )
     }
 
-    // Keep the graph mounted on Home so notification deep links always resolve.
-    // Navigation handles the Activity's launch intent automatically on cold start.
-    LaunchedEffect(navigationIntent) {
-        navigationIntent?.let { intent ->
+    // Deep links are applied only after Splash has navigated away: applying
+    // one while Splash is current would be popped by Splash's own navigation
+    // (popUpTo Splash, inclusive). A blocked app stays on Splash, so a
+    // pending deep link correctly never fires there.
+    LaunchedEffect(navigationIntent, currentRoute) {
+        val intent = navigationIntent
+        if (intent != null && currentRoute != Screen.Splash.route) {
             try {
                 navController.handleDeepLink(intent)
             } finally {
@@ -193,8 +197,20 @@ fun MiraNavGraph(
                     navDeepLink { uriPattern = "mira://chat" }
                 )
             ) { backStackEntry ->
+                val prompt = backStackEntry.arguments?.getString("prompt")
+                val resolvedPrompt = if (prompt == "__shared_text__") {
+                    SharedTextHolder.get()
+                } else {
+                    prompt?.let {
+                        try {
+                            java.net.URLDecoder.decode(it, "UTF-8")
+                        } catch (_: Exception) {
+                            it
+                        }
+                    }
+                }
                 ChatScreen(
-                    initialPrompt = backStackEntry.arguments?.getString("prompt"),
+                    initialPrompt = resolvedPrompt,
                     onBack = { navController.popBackStack() },
                     onOpenBrowser = { url ->
                         navController.navigate("browser?url=${java.net.URLEncoder.encode(url, "UTF-8")}")

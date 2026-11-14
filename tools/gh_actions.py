@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check latest GitHub Actions runs for mira-ai-voice-assistant and download the
+"""Check latest GitHub Actions runs for mira-ai and download the
 debug APK artifact. Reuses the push.py credential helper (custom.github-pat).
 Usage:
   python3 gh_actions.py status            -> print latest runs
@@ -13,7 +13,7 @@ sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/bin")
 sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/templates/skill/bin")
 from dynamic_credentials import add_surrogate_to_request, read_response_body
 
-REPO = "ryoaonetsuki/mira-ai-voice-assistant"
+REPO = "ryoaonetsuki/mira-ai"
 BASE = "https://api.github.com"
 CREDENTIAL = "custom.github-pat"
 OUT = os.path.expanduser("~/workspace/user/files/mira-ai-debug.apk")

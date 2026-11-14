@@ -164,7 +164,11 @@ class VisionTtsRemovalGuardTest {
         // Live agent voice; the watchdog's direct path exists only in its no-TTS form.
         assertFalse("VoiceTurnRouter must not contain a mayUseFallbackTts policy", content.contains("mayUseFallbackTts"))
         assertFalse("VoiceTurnRouter must not contain a TTS fallback action", content.contains("RUN_DIRECT_PATH_WITH_TTS"))
-        assertTrue("VoiceTurnRouter must keep the no-TTS direct path", content.contains("RUN_DIRECT_PATH_NO_TTS"))
+        // The no-TTS direct path lives in the watchdog, not the router.
+        val watchdogFile = getFile("io/github/ryoaonetsuki/mira/voice/TurnWatchdog.kt")
+        val watchdogContent = watchdogFile.readText()
+        assertTrue("TurnWatchdog must keep the no-TTS direct path", watchdogContent.contains("RUN_DIRECT_PATH_NO_TTS"))
+        assertFalse("TurnWatchdog must not contain a TTS fallback action", watchdogContent.contains("RUN_DIRECT_PATH_WITH_TTS"))
     }
 
     @Test

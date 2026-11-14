@@ -6,7 +6,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+// Robolectric: plain-JVM unit tests run with unitTests.isReturnDefaultValues = true,
+// so Intent.putExtra returns null and every share test NPEs. Robolectric gives a
+// real Intent implementation.
+@RunWith(RobolectricTestRunner::class)
 class ShareIntentTest {
 
     @Test

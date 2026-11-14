@@ -519,8 +519,9 @@ class TaskExecutor(
                     stepsUsed = skill.steps.size
                 )
             }
-            // Partial success: some non-critical steps skipped, but <= 25%.
-            if (result.skippedCount > 0 && result.skippedCount * 4 <= skill.steps.size) {
+            // Partial success: a minority of non-critical steps skipped (AU-M4: a replay
+            // that skipped steps is never a full success; half or more skipped fails outright).
+            if (result.skippedCount > 0 && result.skippedCount * 2 < skill.steps.size) {
                 skills.markReplayOutcome(skill.id, false)
                 return TaskResult(
                     status = TaskStatus.PARTIAL,
@@ -831,12 +832,13 @@ class TaskExecutor(
         }
 
         // (iii) If any step was skipped, replay is not a full success.
-        // Fail outright when skipped steps exceed 25%.
+        // Fail outright when half or more steps were skipped (AU-M4: a replay that
+        // skipped half its steps must not succeed); a minority skipped is PARTIAL.
         if (skippedCount > 0) {
             val skippedDetail = skippedSteps.joinToString(", ")
-            val isMajoritySkipped = skippedCount * 4 > totalSteps
+            val isMajoritySkipped = skippedCount * 2 >= totalSteps
             val diag = if (isMajoritySkipped) {
-                "Macro replay failed: skipped $skippedCount of $totalSteps steps (>25%) for '${skill.goal}' — skipped: $skippedDetail"
+                "Macro replay failed: skipped $skippedCount of $totalSteps steps (half or more) for '${skill.goal}' — skipped: $skippedDetail"
             } else {
                 "Macro replay partial: skipped $skippedCount of $totalSteps steps for '${skill.goal}' — skipped: $skippedDetail"
             }
@@ -1528,7 +1530,7 @@ class TaskExecutor(
                 if (!targetQuery.isNullOrBlank()) {
                     val match = nodes.firstOrNull {
                         (it.isEditable || it.isClickable) &&
-                            (it.text.contains(targetQuery, ignoreCase = true) || it.contentDescription.contains(targetQuery, ignoreCase = true))
+                            (it.text.contains(targetQuery, ignoreCase = true) || it.contentDescription.contains(targetQuery, ignoreCase = true) || it.viewId.contains(targetQuery, ignoreCase = true))
                     }
                     if (match != null) return match
                     // AU-M6: recorded field identity not found — fall back to
@@ -1667,10 +1669,14 @@ class TaskExecutor(
 
             // MATCH: readBack equals intended text.
             // UNKNOWN: readBack is blank (typical for password/secret fields) — accept only then.
-            val isPasswordField = targetQuery != null &&
+            // The reliable signal is the typed field node's isPassword flag (Android reports it
+            // for password EditTexts and the accessibility dump carries it via ScreenNode);
+            // the targetQuery keywords are only a fallback for recorders that named the field.
+            val typedNode = automation.dumpScreen().firstOrNull { it.isEditable || it.className.contains("EditText", ignoreCase = true) }
+            val isPasswordField = typedNode?.isPassword == true || (targetQuery != null &&
                 (targetQuery.contains("password", ignoreCase = true) ||
                  targetQuery.contains("secret", ignoreCase = true) ||
-                 targetQuery.contains("pass", ignoreCase = true))
+                 targetQuery.contains("pass", ignoreCase = true)))
             val success = (readBack == text) || (setOk && readBack.isNullOrBlank() && isPasswordField)
             return if (success) {
                 val msg = if (pressEnter && hasResults) {

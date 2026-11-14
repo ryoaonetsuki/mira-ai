@@ -61,7 +61,9 @@ class MiraNotificationListener : NotificationListenerService() {
                 if (title.isBlank() || text.isBlank()) return@launch
 
                 // Skip group notifications — auto-replying into a group is wrong (1:1 only)
-                val messagingStyle = Notification.MessagingStyle.extractMessagingStyleFromNotification(notification)
+                // (Framework MessagingStyle.extractMessagingStyleFromNotification is a hidden
+                // API, so use the public AndroidX equivalent.)
+                val messagingStyle = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
                 if (messagingStyle?.isGroupConversation == true) {
                     Log.w(TAG, "Skipping group conversation notification: $title")
                     return@launch

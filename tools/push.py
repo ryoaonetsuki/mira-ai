@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Push a local directory to ryoaonetsuki/mira-ai-voice-assistant via GitHub
+"""Push a local directory to ryoaonetsuki/mira-ai via GitHub
 Contents API single-file PUTs (reliable; the full-tree blob POST path 500s).
 
 Bodies are sent via urllib (NOT via argv) so large files (PNG icons) do not
@@ -21,7 +21,7 @@ from dynamic_credentials import add_surrogate_to_request, read_response_body, Dy
 
 ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith("--") else os.path.expanduser("~/workspace/mira-final")
 MSG = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else "Mira AI update"
-REPO = "ryoaonetsuki/mira-ai-voice-assistant"
+REPO = "ryoaonetsuki/mira-ai"
 BRANCH = "main"
 BASE = "https://api.github.com"
 CREDENTIAL = "custom.github-pat"

@@ -112,16 +112,17 @@ class JarvisExtrasTest {
         val step = TaskStep(TaskStep.ACTION_OPEN_APP, mapOf("app" to "settings"))
         val savedSkill = service.saveOrUpdate("open settings", listOf(step))
 
-        // When disabled, saveOrUpdate stores nothing to the store
+        // When disabled, saveOrUpdate stores nothing to the store and returns
+        // null (AU-m9: no phantom empty skill).
         assertNull(store.data)
-        assertTrue(savedSkill.steps.isEmpty())
+        assertNull(savedSkill)
 
         // findMatch returns null when disabled
         assertNull(service.findMatch("open settings"))
 
         // Enable skills and save again
         enabled = true
-        val realSaved = service.saveOrUpdate("open settings", listOf(step))
+        val realSaved = requireNotNull(service.saveOrUpdate("open settings", listOf(step)))
         assertNotNull(store.data)
         assertEquals(1, realSaved.steps.size)
         assertNotNull(service.findMatch("open settings"))
@@ -131,7 +132,7 @@ class JarvisExtrasTest {
         assertNull(service.findMatch("open settings"))
 
         // saveOrUpdate while disabled returns existing skill without updating
-        val returnExisting = service.saveOrUpdate("open settings", listOf(step))
+        val returnExisting = requireNotNull(service.saveOrUpdate("open settings", listOf(step)))
         assertEquals(realSaved.id, returnExisting.id)
     }
 

@@ -167,9 +167,16 @@ class EchoGateTest {
 
     @Test
     fun testDefaultParameterValues() {
-        // shouldForward has default echoGuardEnabled = true
+        // shouldForward has default echoGuardEnabled = true.
+        // VO-M1 (v1.0.2): the gate sees POST-AEC audio, so an echo residual is small
+        // (0.05f) and must be dropped, while normal near-field speech (0.10f) is a
+        // barge-in and must be forwarded — threshold = 0.20 * 0.3 + 0.02 = 0.08f.
         assertFalse(
-            "Default echoGuardEnabled must be true (active)",
+            "Default echoGuardEnabled must be true (active): post-AEC echo residual dropped",
+            EchoGate.shouldForward(micRms = 0.05f, botLevel = 0.20f, isBotTalking = true)
+        )
+        assertTrue(
+            "Default echoGuardEnabled: normal speech barges in and must forward",
             EchoGate.shouldForward(micRms = 0.10f, botLevel = 0.20f, isBotTalking = true)
         )
         assertTrue(

@@ -339,7 +339,7 @@ class AgentDataLayerTest {
       TaskStep(action = TaskStep.ACTION_DONE)
     )
 
-    val saved = service.saveOrUpdate("Open YouTube", steps)
+    val saved = requireNotNull(service.saveOrUpdate("Open YouTube", steps))
     // Terminal done step must be stripped
     assertEquals(1, saved.steps.size)
     assertEquals(TaskStep.ACTION_OPEN_APP, saved.steps[0].action)
@@ -388,14 +388,14 @@ class AgentDataLayerTest {
     val service = SkillMemoryService(store)
 
     val step1 = TaskStep(action = TaskStep.ACTION_OPEN_APP, params = mapOf("app" to "News"))
-    val first = service.saveOrUpdate("read daily news", listOf(step1))
+    val first = requireNotNull(service.saveOrUpdate("read daily news", listOf(step1)))
     service.markReplayOutcome(first.id, true)
 
     val matchedAfterFirst = service.findMatch("read daily news")
     assertEquals(1, matchedAfterFirst?.successCount)
 
     val step2 = TaskStep(action = TaskStep.ACTION_SCROLL, params = mapOf("direction" to "down"))
-    val updated = service.saveOrUpdate("Read Daily News", listOf(step1, step2))
+    val updated = requireNotNull(service.saveOrUpdate("Read Daily News", listOf(step1, step2)))
 
     assertEquals(first.id, updated.id)
     assertEquals(1, updated.successCount)
@@ -408,10 +408,10 @@ class AgentDataLayerTest {
   fun testSkillMemoryService_MarkReplayOutcomeSuccessIncrements() {
     val store = InMemorySkillStore()
     val service = SkillMemoryService(store)
-    val skill = service.saveOrUpdate(
+    val skill = requireNotNull(service.saveOrUpdate(
       "play music",
       listOf(TaskStep(action = TaskStep.ACTION_OPEN_APP, params = mapOf("app" to "Spotify")))
-    )
+    ))
     assertEquals(0, skill.successCount)
 
     service.markReplayOutcome(skill.id, true)
@@ -425,10 +425,10 @@ class AgentDataLayerTest {
   fun testSkillMemoryService_MarkReplayOutcome_C1_KeepsOnOneOrTwoFailures_ResetsOnSuccess_DeletesOnThird() {
     val store = InMemorySkillStore()
     val service = SkillMemoryService(store)
-    val skill = service.saveOrUpdate(
+    val skill = requireNotNull(service.saveOrUpdate(
       "play podcast",
       listOf(TaskStep(action = TaskStep.ACTION_OPEN_APP, params = mapOf("app" to "Podcasts")))
-    )
+    ))
     assertNotNull(service.findMatch("play podcast"))
 
     // 1st failure -> kept with consecutiveFailures = 1

@@ -409,8 +409,12 @@ object ConnectorIntentHandler {
         return lower.startsWith("find place") ||
                 lower.startsWith("search place") ||
                 lower.startsWith("places search") ||
-                lower.startsWith("where is") ||
-                lower.startsWith("কোথায়")
+                lower.startsWith("show on map") ||
+                lower.startsWith("directions to") ||
+                lower.startsWith("nearby") ||
+                lower.contains(" on the map") ||
+                (lower.contains("map") && lower.contains("place")) ||
+                (lower.contains("map") && lower.contains("location"))
     }
 
     private fun extractMapsQuery(text: String): String {

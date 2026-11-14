@@ -160,6 +160,8 @@ fun SkillsScreen(
                             context.getString(R.string.skill_execution_cancelled)
                         TaskStatus.FAILED ->
                             context.getString(R.string.skill_execution_failed) + ": " + result.message
+                        TaskStatus.PARTIAL ->
+                            context.getString(R.string.skill_execution_success) + ": Partially completed — " + result.message
                     }
                 }
             } catch (e: Exception) {
@@ -910,6 +912,7 @@ fun SkillsScreen(
                         TaskStatus.SUCCESS -> "SUCCESS" to Color(0xFF10B981)
                         TaskStatus.FAILED -> "FAILED" to Color(0xFFEF4444)
                         TaskStatus.CANCELLED -> "CANCELLED" to Color(0xFFF59E0B)
+                        TaskStatus.PARTIAL -> "PARTIAL" to Color(0xFFFB923C)
                     }
 
                     Surface(

@@ -31,12 +31,18 @@ class TaskSupervisorTest {
   @Test
   fun `done success within 45s is ALREADY_DONE after 45s is EXECUTE`() {
     val sup = TaskSupervisor()
-    val key = sup.canonicalKey("web_search", mapOf("query" to "pizza"), null, null)!!
-    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 1000))
-    sup.markFinished(key, true, 2000)
+    // AU-B1: only open_app/type_text post-success dedup; web_search always re-executes
+    // (a repeat search is a real repeat action, never a cached success).
+    val searchKey = sup.canonicalKey("web_search", mapOf("query" to "pizza"), null, null)!!
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(searchKey, 1000))
+    sup.markFinished(searchKey, true, 2000)
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(searchKey, 2000 + 1000)) // within 45s: still executes
 
-    assertEquals(DedupDecision.ALREADY_DONE, sup.checkAndReserve(key, 2000 + 1000)) // within 45s
-    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(key, 2000 + 45_001))   // after 45s
+    val openKey = sup.canonicalKey("open_app", mapOf("app" to "youtube"), null, "com.google.android.youtube")!!
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(openKey, 1000))
+    sup.markFinished(openKey, true, 2000)
+    assertEquals(DedupDecision.ALREADY_DONE, sup.checkAndReserve(openKey, 2000 + 1000)) // within 45s
+    assertEquals(DedupDecision.EXECUTE, sup.checkAndReserve(openKey, 2000 + 45_001))   // after 45s
   }
 
   @Test

@@ -184,10 +184,32 @@ class TaskSupervisor {
     when (parsedKind) {
       "Scroll", "TapLabel", "TapNumber", "PressBack" -> return TurnClass.FOLLOW_UP
       "OpenApp" -> {
-        return TurnClass.NEW_TASK
+        // FOLLOW_UP only when the new turn opens the same app the RUNNING GOAL is
+        // about. The goal text is the authority: the recorded runningTarget may name
+        // the app the user is leaving, not the one the goal works in. The app name
+        // is any meaningful segment of the target package (e.g. "netflix" in
+        // "com.netflix.mediaclient") mentioned in the goal text.
+        val segments = (parsedTarget ?: "").lowercase().split(".", " ", "_")
+          .filter { it.length >= 3 }
+        return if (segments.any { runningGoalNormalized.contains(it) }) {
+          TurnClass.FOLLOW_UP
+        } else {
+          TurnClass.NEW_TASK
+        }
       }
       "Search", "Dial" -> return TurnClass.NEW_TASK
-      null -> return TurnClass.NEW_TASK
+      // Unclassifiable turn: a vague turn ("do something") does not interrupt the
+      // running task, but an explicitly different one ("...completely different",
+      // "...instead", "something else") is a new task.
+      null -> {
+        return if (normNew.contains("different") || normNew.contains("instead") ||
+          normNew.contains("something else")
+        ) {
+          TurnClass.NEW_TASK
+        } else {
+          TurnClass.FOLLOW_UP
+        }
+      }
     }
 
     return TurnClass.FOLLOW_UP

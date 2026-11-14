@@ -41,6 +41,8 @@ import io.github.ryoaonetsuki.mira.automation.agent.MiraScreenPort
 import io.github.ryoaonetsuki.mira.automation.agent.MIRA_DEFAULT_OPERATING_PACE
 import io.github.ryoaonetsuki.mira.automation.agent.VisionFirstPerception
 import io.github.ryoaonetsuki.mira.automation.agent.formatNumberedList
+import io.github.ryoaonetsuki.mira.automation.agent.DEFAULT_SCREEN_WIDTH
+import io.github.ryoaonetsuki.mira.automation.agent.DEFAULT_SCREEN_HEIGHT
 import io.github.ryoaonetsuki.mira.data.local.MiraDatabase
 import io.github.ryoaonetsuki.mira.data.local.entities.ChatMessageEntity
 import io.github.ryoaonetsuki.mira.data.local.entities.NotificationEntity
@@ -178,7 +180,7 @@ class MicService : Service() {
     private var connectingWatchdogJob: Job? = null
     private var startVoiceSessionJob: Job? = null
     private val taskSupervisor = TaskSupervisor()
-    private val functionCallJobs = mutableSetOf<Job>()
+    internal val functionCallJobs = mutableSetOf<Job>()
     /**
      * Turn G: the call is owned by "call active" state, not by one WebSocket.
      * [autoRestartJob] re-starts a fresh session after a terminal error
@@ -189,10 +191,12 @@ class MicService : Service() {
     private var autoRestartJob: Job? = null
     private var autoRestartAttempt: Int = 0
     private var livenessWatchdogJob: Job? = null
-    @Volatile private var lastAudioFrameElapsedMs: Long = 0L
+    @Volatile private var lastMicFrameElapsedMs: Long = 0L
+    @Volatile private var lastBotAudioFrameElapsedMs: Long = 0L
     @Volatile private var lastServerActivityElapsedMs: Long = 0L
     private val functionCallMutex = kotlinx.coroutines.sync.Mutex()
     @Volatile private var userRequestedStop: Boolean = false
+    @Volatile internal var isMicMuted: Boolean = false
     @Volatile private var connectsThisCall: Int = 0
     @Volatile private var lastAutomationGoal: String? = null
     @Volatile private var currentAutomationTarget: String? = null
@@ -206,6 +210,7 @@ class MicService : Service() {
     private val sessionGenerationToken = java.util.concurrent.atomic.AtomicLong(0L)
     @Volatile private var lastBotSpeakingEndTimeMs: Long = 0L
     @Volatile private var isTtsPlaying: Boolean = false
+    @Volatile private var postCallWatchdogSessionId: String? = null
     private val recentModelTranscripts = ArrayDeque<String>()
     private var pendingModelTranscript = ""
     private var lastSavedVoiceText = ""
@@ -303,15 +308,17 @@ class MicService : Service() {
     private fun handleUserTurnWatchdogFired(transcript: String) {
         val isConnected = sessionManager?.state?.value == SessionManagerState.CONNECTED
         val inFlightCount = sessionManager?.activeFunctionCallCount() ?: 0
-        Log.i(TAG, "MIRA_LIVE_VOICE: User turn watchdog fired (connected=$isConnected, inFlight=$inFlightCount): $transcript")
-        if (isConnected && !shouldSuppressNudgeWhileInFlight(inFlightCount)) {
-            Log.i(TAG, "MIRA_LIVE_VOICE: Injecting user turn nudge into same Live session: $transcript")
+        val now = android.os.SystemClock.elapsedRealtime()
+        val modelRecentlyActive = _modelTranscript.value.isNotBlank() || isTtsPlaying || (now - lastBotSpeakingEndTimeMs < 10_000L)
+        Log.i(TAG, "MIRA_LIVE_VOICE: User turn watchdog fired (connected=$isConnected, inFlight=$inFlightCount, modelRecentlyActive=$modelRecentlyActive): ${truncateLog(transcript)}")
+        if (isConnected && !shouldSuppressNudgeWhileInFlight(inFlightCount) && !modelRecentlyActive) {
+            Log.i(TAG, "MIRA_LIVE_VOICE: Injecting user turn nudge into same Live session: ${truncateLog(transcript)}")
             sessionManager?.sendUserMessage(transcript)
             // Symptom 3(b): arm second-stage escalation
             userTurnEscalator.arm("no-model-response-after-nudge")
         } else if (!isConnected && shouldRunDisconnectedDirectPath(sessionManager?.state?.value ?: SessionManagerState.IDLE)) {
             val action = WatchdogActionResolver.resolve(isLiveConnected = false, isUserInitiated = true)
-            Log.i(TAG, "MIRA_LIVE_VOICE: Live not connected, action=$action; running direct path for: $transcript")
+            Log.i(TAG, "MIRA_LIVE_VOICE: Live not connected, action=$action; running direct path for: ${truncateLog(transcript)}")
             serviceScope.launch(Dispatchers.IO) {
                 val directAction = MiraAutomationBridge.parseDirectAction(transcript)
                 if (directAction != null) {
@@ -337,7 +344,7 @@ class MicService : Service() {
                             val skillService = SkillMemoryService.getInstance(applicationContext)
                             val match = skillService.findMatch(transcript)
                             if (match != null) {
-                                Log.i(TAG, "MIRA_LIVE_VOICE: Direct path near-miss found skill match for: $transcript")
+                                Log.i(TAG, "MIRA_LIVE_VOICE: Direct path near-miss found skill match for: ${truncateLog(transcript)}")
                                 val result = automationBridge.executeSkill(match)
                                 recordAutomationNotification(
                                     title = "Replayed Skill ${if (result.status == TaskStatus.SUCCESS) "Completed" else "Failed"}",
@@ -367,12 +374,15 @@ class MicService : Service() {
 
     private fun handlePostCallWatchdogFired(outcome: String) {
         val isConnected = sessionManager?.state?.value == SessionManagerState.CONNECTED
-        Log.i(TAG, "MIRA_LIVE_VOICE: Post-call watchdog fired (connected=$isConnected, outcome=$outcome)")
-        if (isConnected) {
+        val inFlightCount = sessionManager?.activeFunctionCallCount() ?: 0
+        val sessionUnchanged = postCallWatchdogSessionId == sessionManager?.sessionId
+        Log.i(TAG, "MIRA_LIVE_VOICE: Post-call watchdog fired (connected=$isConnected, inFlight=$inFlightCount, sessionUnchanged=$sessionUnchanged, outcome=${truncateLog(outcome)})")
+        if (isConnected && inFlightCount == 0 && sessionUnchanged) {
             val nudge = TurnWatchdog.formatPostCallNudge(outcome)
-            Log.i(TAG, "MIRA_LIVE_VOICE: Injecting post-call outcome nudge into same Live session: $nudge")
+            Log.i(TAG, "MIRA_LIVE_VOICE: Injecting post-call outcome nudge into same Live session: ${truncateLog(nudge)}")
             sessionManager?.sendUserMessage(nudge)
         }
+        postCallWatchdogSessionId = null
     }
 
     private fun recordAutomationNotification(title: String, message: String) {
@@ -457,6 +467,8 @@ class MicService : Service() {
         connectingWatchdogJob = null
         livenessWatchdogJob?.cancel()
         livenessWatchdogJob = null
+        synchronized(functionCallJobs) { functionCallJobs.forEach { it.cancel() } }
+        functionCallJobs.clear()
 
         if (!userRequestedStop && callStateStore.isCallActive() &&
             CallRestartPolicy.shouldRestart(autoRestartAttempt, message)
@@ -535,9 +547,14 @@ class MicService : Service() {
         return true
     }
 
-    /** Turn G: a mic frame arrived — the capture path and transport are alive. */
-    private fun noteAudioFrame() {
-        lastAudioFrameElapsedMs = android.os.SystemClock.elapsedRealtime()
+    /** Turn G: a user-mic frame arrived — the capture path is alive. */
+    private fun noteMicFrame() {
+        lastMicFrameElapsedMs = android.os.SystemClock.elapsedRealtime()
+    }
+
+    /** Turn G: a bot-audio frame arrived — diagnostics only, not the deaf-mic check. */
+    private fun noteBotAudioFrame() {
+        lastBotAudioFrameElapsedMs = android.os.SystemClock.elapsedRealtime()
     }
 
     /**
@@ -571,7 +588,7 @@ class MicService : Service() {
                     noteServerActivity()
                     sessionManager?.requestReconnect("no-server-activity")
                 } else if (VoiceLivenessPolicy.shouldTriggerRestart(
-                        lastAudioFrameElapsedMs,
+                        lastMicFrameElapsedMs,
                         now,
                         _isMuted.value, live, _isReconnecting.value
                     )
@@ -581,7 +598,7 @@ class MicService : Service() {
                         "watchdog-no-audio-frames: no mic frames for ${VoiceLivenessPolicy.MAX_SILENT_MS}ms"
                     )
                     // Avoid a tight loop while the reconnect is in flight.
-                    noteAudioFrame()
+                    noteMicFrame()
                     sessionManager?.requestReconnect("no-audio-frames")
                 }
             }
@@ -669,8 +686,9 @@ class MicService : Service() {
     private fun toggleMute() {
         val next = !_isMuted.value
         _isMuted.value = next
+        isMicMuted = next
         Log.i(TAG, "MIRA_LIVE_VOICE: Mic mute toggled to $next")
-        if (!next) noteAudioFrame() // unmuted: frames resume now, not 20s ago
+        if (!next) noteMicFrame() // unmuted: frames resume now, not 20s ago
         sessionManager?.enableMic(!next)
         postCallNotificationIfForeground()
     }
@@ -795,7 +813,7 @@ class MicService : Service() {
                     callStateStore.setCallActive(false)
                     _liveState.value = LiveState.ERROR
                     _voiceStage.value = VoiceStage.ERROR
-                    _errorMessage.value = "Server voice unavailable — $reason — add your own Mira key in Settings or tap to retry"
+                    _errorMessage.value = "Mira Live unavailable — $reason — add your Gemini key in Settings or tap to retry"
                     LiveVoiceDiagnostics.updateLastError(_errorMessage.value!!)
                     LiveVoiceDiagnostics.updateStage("ERROR")
                     dismissNotification()
@@ -929,7 +947,8 @@ class MicService : Service() {
             resumptionStore = resumptionStore,
             listener = createSessionListener(),
             externalScope = serviceScope,
-            echoGuardEnabled = echoGuard
+            echoGuardEnabled = echoGuard,
+            initialMicEnabled = !isMicMuted
         )
 
         if (generation != sessionGenerationToken.get()) {
@@ -946,15 +965,17 @@ class MicService : Service() {
         LiveVoiceDiagnostics.updateActiveRoute("DIRECT")
         LiveVoiceDiagnostics.updateStage("CONNECTING")
 
-        // Connect manager.audioLevel to _micAmplitude (the orb driver)
+        // Connect manager.userAudioLevel to noteMicFrame (capture-path liveness)
         serviceScope.launch {
-            manager.audioLevel.collect { level ->
-                noteAudioFrame() // mic frames flowing = capture path alive
-                if (!_isMuted.value && (_liveState.value == LiveState.LISTENING || _liveState.value == LiveState.SPEAKING)) {
-                    _micAmplitude.value = level
-                } else {
-                    _micAmplitude.value = 0f
-                }
+            manager.userAudioLevel.collect { _ ->
+                noteMicFrame()
+            }
+        }
+
+        // Connect manager.remoteAudioLevel to noteBotAudioFrame (diagnostics only, not deaf-mic check)
+        serviceScope.launch {
+            manager.remoteAudioLevel.collect { _ ->
+                noteBotAudioFrame()
             }
         }
 
@@ -969,6 +990,9 @@ class MicService : Service() {
         }
 
         manager.startSession()
+        if (isMicMuted) {
+            sessionManager?.enableMic(false)
+        }
     }
 
     private fun createSessionListener(): SessionManagerListener {
@@ -1078,7 +1102,6 @@ class MicService : Service() {
             }
 
             override fun onAudioLevel(level: Float) {
-                noteAudioFrame()
                 if (!_isMuted.value && (_liveState.value == LiveState.LISTENING || _liveState.value == LiveState.SPEAKING)) {
                     _micAmplitude.value = level
                 } else {
@@ -1118,15 +1141,15 @@ class MicService : Service() {
             }
 
             override fun onUserTranscript(text: String, isFinal: Boolean) {
-                noteAudioFrame()
-                Log.i(TAG, "MIRA_LIVE_VOICE: User transcript (final=$isFinal): $text")
+                noteMicFrame()
+                Log.d(TAG, "MIRA_LIVE_VOICE: User transcript (final=$isFinal): ${truncateLog(text)}")
                 val now = android.os.SystemClock.elapsedRealtime()
                 val isSpeakingOrDraining = _liveState.value == LiveState.SPEAKING ||
                     isTtsPlaying ||
                     (now - lastBotSpeakingEndTimeMs < 600L)
 
                 if (isSpeakingOrDraining && isEchoOfModelSpeech(text)) {
-                    Log.i(TAG, "MIRA_LIVE_VOICE: Dropping user transcript during/shortly after model speech matching echo: $text")
+                    Log.i(TAG, "MIRA_LIVE_VOICE: Dropping user transcript during/shortly after model speech matching echo: ${truncateLog(text)}")
                     return
                 }
 
@@ -1134,7 +1157,7 @@ class MicService : Service() {
                 val isIntentionalCommand = MiraAutomationBridge.parseDirectAction(text) != null ||
                     MiraAutomationBridge.isAutomationIntent(text)
                 if (!isIntentionalCommand && isEchoOfModelSpeech(text)) {
-                    Log.i(TAG, "MIRA_LIVE_VOICE: Dropping user transcript matching recent model speech: $text")
+                    Log.i(TAG, "MIRA_LIVE_VOICE: Dropping user transcript matching recent model speech: ${truncateLog(text)}")
                     return
                 }
 
@@ -1155,8 +1178,7 @@ class MicService : Service() {
                 noteServerActivity()
                 userTurnWatchdog.cancel()
                 postCallWatchdog.cancel()
-                noteAudioFrame()
-                Log.i(TAG, "MIRA_LIVE_VOICE: Model transcript: $text")
+                Log.d(TAG, "MIRA_LIVE_VOICE: Model transcript: ${truncateLog(text)}")
                 val sanitized = io.github.ryoaonetsuki.mira.identity.MiraOutputFilter.sanitizeForVoice(text)
                 if (sanitized != text) {
                     Log.w(TAG, "MIRA_LIVE_VOICE: Model leaked forbidden token — sanitized for transcript display.")
@@ -1264,7 +1286,8 @@ class MicService : Service() {
             if (appTarget.isNotEmpty()) MiraAutomationBridge.extractTargetApp(appTarget) else null
         } else null
 
-        val key = taskSupervisor.canonicalKey(name, typedArgs, currentAutomationTarget, canonicalTarget)
+        val livePackage = automationPort.getCurrentPackage().orEmpty()
+        val key = taskSupervisor.canonicalKey(name, typedArgs, livePackage, canonicalTarget)
         if (key != null) {
             when (val decision = taskSupervisor.checkAndReserve(key, System.currentTimeMillis())) {
                 DedupDecision.ALREADY_RUNNING -> {
@@ -1273,7 +1296,8 @@ class MicService : Service() {
                             id,
                             name,
                             Value.Object(
-                                "success" to Value.Bool(true),
+                                "success" to Value.Bool(false),
+                                "duplicate" to Value.Bool(true),
                                 "result" to Value.Str("Same task already running — will report once.")
                             )
                         )
@@ -1281,18 +1305,39 @@ class MicService : Service() {
                     return
                 }
                 DedupDecision.ALREADY_DONE -> {
-                    val cached = taskSupervisor.cachedResult(key) ?: "Already completed."
-                    serviceScope.launch {
-                        sessionManager?.sendFunctionResponse(
-                            id,
-                            name,
-                            Value.Object(
-                                "success" to Value.Bool(true),
-                                "result" to Value.Str(cached)
-                            )
-                        )
+                    val shouldSkip = when (name) {
+                        "open_app" -> {
+                            val targetPkg = canonicalTarget
+                            val livePkg = automationPort.getCurrentPackage().orEmpty()
+                            targetPkg != null && livePkg == targetPkg
+                        }
+                        "type_text" -> {
+                            val text = (typedArgs["text"] as? String ?: rawArgs["text"] as? String ?: "").trim()
+                            if (text.isBlank()) false else {
+                                val nodes = automationPort.dumpScreen()
+                                nodes.any { it.text.contains(text, ignoreCase = true) || it.contentDescription.contains(text, ignoreCase = true) }
+                            }
+                        }
+                        else -> false
                     }
-                    return
+                    if (shouldSkip) {
+                        val cached = taskSupervisor.cachedResult(key) ?: "Already completed."
+                        serviceScope.launch {
+                            sessionManager?.sendFunctionResponse(
+                                id,
+                                name,
+                                Value.Object(
+                                    "success" to Value.Bool(true),
+                                    "result" to Value.Str(cached)
+                                )
+                            )
+                        }
+                        return
+                    } else {
+                        taskSupervisor.clearDone(key)
+                        taskSupervisor.reserveRunning(key, System.currentTimeMillis())
+                        // fall through to execute
+                    }
                 }
                 DedupDecision.EXECUTE -> {
                     // proceed to launch below
@@ -1300,6 +1345,7 @@ class MicService : Service() {
             }
         }
 
+        val callSession = sessionManager
         val job = serviceScope.launch(Dispatchers.IO) {
             functionCallMutex.withLock {
                 try {
@@ -1313,13 +1359,18 @@ class MicService : Service() {
                         goal = lastAutomationGoal,
                         appKnowledge = appKnowledge
                     )
-                    sessionManager?.sendFunctionResponse(id, name, responseObj)
+                    if (callSession === sessionManager) {
+                        sessionManager?.sendFunctionResponse(id, name, responseObj)
+                    } else {
+                        Log.w(TAG, "MIRA_LIVE_VOICE: Dropping function response for $id ($name) — session changed before completion")
+                    }
                     val outcome = extractOutcomeString(responseObj)
                     val success = (responseObj.value["success"] as? Value.Bool)?.value
                         ?: !responseObj.value.containsKey("error")
                     if (key != null) {
                         taskSupervisor.markFinished(key, success = success, System.currentTimeMillis(), outcome)
                     }
+                    postCallWatchdogSessionId = sessionManager?.sessionId
                     postCallWatchdog.arm(outcome, TurnWatchdog.DEFAULT_POST_CALL_TIMEOUT_MS)
                 } catch (e: CancellationException) {
                     if (key != null) {
@@ -1346,6 +1397,7 @@ class MicService : Service() {
                         "error" to Value.Str(e.message ?: "Function execution failed")
                     )
                     sessionManager?.sendFunctionResponse(id, name, errObj)
+                    postCallWatchdogSessionId = sessionManager?.sessionId
                     postCallWatchdog.arm("Function failed: ${e.message}", TurnWatchdog.DEFAULT_POST_CALL_TIMEOUT_MS)
                 } finally {
                     _statusText.value = ""
@@ -1418,6 +1470,8 @@ class MicService : Service() {
                 userTurnWatchdog.cancel()
                 postCallWatchdog.cancel()
                 automationBridge.cancel()
+                synchronized(functionCallJobs) { functionCallJobs.forEach { it.cancel() } }
+                functionCallJobs.clear()
                 serviceScope.launch(Dispatchers.IO) {
                     try {
                         val db = MiraDatabase.getInstance(applicationContext)
@@ -1489,7 +1543,9 @@ class MicService : Service() {
                 // so the interrupt check above compares against the previous goal).
                 lastAutomationGoal = cleanText
 
-                userTurnWatchdog.arm(cleanText, TurnWatchdog.DEFAULT_USER_TURN_TIMEOUT_MS)
+                val inFlightCount = sessionManager?.activeFunctionCallCount() ?: 0
+                val timeoutMs = if (inFlightCount > 0) TurnWatchdog.DEFAULT_USER_TURN_TIMEOUT_MS else TurnWatchdog.DEFAULT_USER_TURN_TIMEOUT_NO_TOOL_MS
+                userTurnWatchdog.arm(cleanText, timeoutMs)
             }
         }
     }
@@ -1501,7 +1557,7 @@ class MicService : Service() {
         _voiceStage.value = VoiceStage.IDLE
     }
 
-    private fun stopLiveVoiceSessionInternal(hideOverlay: Boolean = true, cancelAutomation: Boolean = true) {
+    internal fun stopLiveVoiceSessionInternal(hideOverlay: Boolean = true, cancelAutomation: Boolean = true) {
         userTurnWatchdog.cancel()
         postCallWatchdog.cancel()
         userTurnEscalator.cancel()
@@ -1509,6 +1565,8 @@ class MicService : Service() {
         if (cancelAutomation) {
             automationBridge.cancel()
         }
+        synchronized(functionCallJobs) { functionCallJobs.forEach { it.cancel() } }
+        functionCallJobs.clear()
         if (hideOverlay) {
             try {
                 automationPort.hideTapNumbers()
@@ -1717,14 +1775,11 @@ internal suspend fun getEffectiveGeminiApiKey(context: Context?): String? {
         val resolver = io.github.ryoaonetsuki.mira.backend.ApiKeyResolver(context)
         when (val keySource = resolver.resolveKey()) {
             is io.github.ryoaonetsuki.mira.backend.KeySource.UserKey -> keySource.key
-            else -> SecurePreferences(context).getGeminiApiKey()
+            is io.github.ryoaonetsuki.mira.backend.KeySource.ServerKey -> io.github.ryoaonetsuki.mira.backend.ApiKeyResolver.USE_PROXY_SENTINEL
+            io.github.ryoaonetsuki.mira.backend.KeySource.NoKey -> null
         }
     } catch (_: Throwable) {
-        try {
-            SecurePreferences(context).getGeminiApiKey()
-        } catch (_: Throwable) {
-            null
-        }
+        null
     }
 }
 
@@ -1746,6 +1801,8 @@ internal suspend fun resolveVisionCoordinates(
         Log.w(TAG, "Vision locator failed: Gemini API key is missing or blank")
         return VisionResolution(null, "Mira API key is missing in Settings")
     }
+    val useServerProxy = apiKey == io.github.ryoaonetsuki.mira.backend.ApiKeyResolver.USE_PROXY_SENTINEL
+    val effectiveKey = if (useServerProxy) "" else apiKey
 
     val jpeg = automationPort.takeScreenshotJpeg(720)
     if (jpeg == null || jpeg.isEmpty()) {
@@ -1755,7 +1812,7 @@ internal suspend fun resolveVisionCoordinates(
 
     val dimensions = automationPort.getScreenDimensions()
         ?: context?.resources?.displayMetrics?.let { Pair(it.widthPixels, it.heightPixels) }
-        ?: Pair(1080, 2400)
+        ?: Pair(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT)
     val screenWidth = dimensions.first
     val screenHeight = dimensions.second
 
@@ -1763,7 +1820,8 @@ internal suspend fun resolveVisionCoordinates(
     val nodeText = automationPort.formatNodes(nodes)
     return try {
         val result = client.locateElementWithVision(
-            apiKey = apiKey,
+            apiKey = effectiveKey,
+            useServerProxy = useServerProxy,
             imageBytes = jpeg,
             targetDescription = target,
             nodeDump = nodeText,
@@ -1860,6 +1918,11 @@ private suspend fun buildActionResult(
         resultMap["app_knowledge"] = Value.Str(appNote)
     }
     return Value.Object(resultMap)
+}
+
+private fun truncateLog(s: String?): String {
+    val t = s ?: ""
+    return if (t.length > 80) "${t.take(80)}...[len=${t.length}]" else t
 }
 
 private fun isWrongPackageChange(
@@ -2091,7 +2154,9 @@ private suspend fun executeFunctionCallInternal(
                     appKnowledge = appKnowledge,
                     tapNumbersEnabled = tapNumbersEnabled
                 )
+                automationBridge.registerExecutor(executor)
                 val replayResult = executor.replaySkillDirect(matchedSkill)
+                automationBridge.unregisterExecutor(executor)
                 if (replayResult.status == TaskStatus.SUCCESS) {
                     val postPackage = automationPort.getCurrentPackage().orEmpty()
                     val postNodes = automationPort.dumpScreen()
@@ -3044,11 +3109,12 @@ private suspend fun executeFunctionCallInternal(
         "get_screen" -> {
             val postPackage = automationPort.getCurrentPackage().orEmpty()
             val postNodes = automationPort.dumpScreen()
+            val hasNodes = postNodes.isNotEmpty()
 
             return buildActionResult(
                 automationPort = automationPort,
-                outcome = "Current screen inspected",
-                success = true,
+                outcome = if (hasNodes) "Current screen inspected" else "Current screen inspected (no UI elements found)",
+                success = hasNodes,
                 postPackage = postPackage,
                 postNodes = postNodes,
                 isStepOpenApp = false,
@@ -3104,7 +3170,9 @@ private suspend fun executeFunctionCallInternal(
                 appKnowledge = appKnowledge,
                 tapNumbersEnabled = tapNumbersEnabled
             )
+            automationBridge.registerExecutor(executor)
             val replayResult = executor.replaySkillDirect(matchedSkill)
+            automationBridge.unregisterExecutor(executor)
             val postPackage = automationPort.getCurrentPackage().orEmpty()
             val postNodes = automationPort.dumpScreen()
             return buildActionResult(

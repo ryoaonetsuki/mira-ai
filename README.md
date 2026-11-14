@@ -11,10 +11,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ryoaonetsuki/mira-ai-voice-assistant/releases"><img src="https://img.shields.io/github/v/release/ryoaonetsuki/mira-ai-voice-assistant" alt="Release" /></a>
-  <a href="https://github.com/ryoaonetsuki/mira-ai-voice-assistant/releases/download/v1.0.0/mira-ai-debug.apk"><img src="https://img.shields.io/badge/Download-APK-3DDC84?logo=android" alt="Download APK" /></a>
+  <a href="https://github.com/ryoaonetsuki/mira-ai/releases"><img src="https://img.shields.io/github/v/release/ryoaonetsuki/mira-ai" alt="Release" /></a>
+  <a href="https://github.com/ryoaonetsuki/mira-ai/releases/download/v1.0.2/mira-ai-release.apk"><img src="https://img.shields.io/badge/Download-APK-3DDC84?logo=android" alt="Download APK" /></a>
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" />
-  <a href="https://github.com/ryoaonetsuki/mira-ai-voice-assistant/actions/workflows/build-apk.yml"><img src="https://img.shields.io/github/actions/workflow/status/ryoaonetsuki/mira-ai-voice-assistant/build-apk.yml?branch=main" alt="Build status" /></a>
+  <a href="https://github.com/ryoaonetsuki/mira-ai/actions/workflows/build-apk.yml"><img src="https://img.shields.io/github/actions/workflow/status/ryoaonetsuki/mira-ai/build-apk.yml?branch=main" alt="Build status" /></a>
   <img src="https://img.shields.io/badge/Android-26%2B-3DDC84?logo=android" alt="Android 26+" />
   <img src="https://img.shields.io/badge/Kotlin-2.2.20-7F52FF?logo=kotlin" alt="Kotlin 2.2.20" />
 </p>
@@ -49,11 +49,11 @@
 
 ## Download
 
-### ⬇️ Download Mira AI v1.0.0
+### ⬇️ Download Mira AI v1.0.2
 
-[![Download APK](https://img.shields.io/badge/Download-APK%20v1.0.0-3DDC84?style=for-the-badge&logo=android)](https://github.com/ryoaonetsuki/mira-ai-voice-assistant/releases/download/v1.0.0/mira-ai-debug.apk)
+[![Download APK](https://img.shields.io/badge/Download-APK%20v1.0.2-3DDC84?style=for-the-badge&logo=android)](https://github.com/ryoaonetsuki/mira-ai/releases/download/v1.0.2/mira-ai-release.apk)
 
-**[mira-ai-debug.apk — v1.0.0 (57.5 MB)](https://github.com/ryoaonetsuki/mira-ai-voice-assistant/releases/download/v1.0.0/mira-ai-debug.apk)** — install it directly on your phone. No account, no sign-up. Older releases are on the [Releases page](https://github.com/ryoaonetsuki/mira-ai-voice-assistant/releases).
+**[mira-ai-release.apk — v1.0.2 (57.5 MB)](https://github.com/ryoaonetsuki/mira-ai/releases/download/v1.0.2/mira-ai-release.apk)** — install it directly on your phone. No account, no sign-up. Older releases are on the [Releases page](https://github.com/ryoaonetsuki/mira-ai/releases).
 
 ## Setup
 
@@ -80,8 +80,8 @@ by default — Mira works directly without it.
 
 ```bash
 # Clone the repository
-git clone https://github.com/ryoaonetsuki/mira-ai-voice-assistant.git
-cd mira-ai-voice-assistant
+git clone https://github.com/ryoaonetsuki/mira-ai.git
+cd mira-ai
 
 # Build the debug APK (needs Android SDK 36)
 ./gradlew assembleDebug

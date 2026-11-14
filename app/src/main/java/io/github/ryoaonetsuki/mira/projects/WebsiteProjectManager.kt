@@ -156,6 +156,10 @@ When the user explicitly asks you to build, create, or save a website project, w
         }
     }
 
+    private fun isValidFilePath(fileName: String): Boolean {
+        return !fileName.startsWith("/") && !fileName.contains("/..") && !fileName.contains("\\..")
+    }
+
     /**
      * Extracts files from content using <<<FILE:filename>>>, // FILE: filename, or html blocks.
      */
@@ -163,7 +167,7 @@ When the user explicitly asks you to build, create, or save a website project, w
         val result = mutableMapOf<String, String>()
 
         // 1. Try <<<FILE:filename>>>...<<<ENDFILE>>>
-        val tagPattern = Regex("<<<FILE:\\s*([a-zA-Z0-9_.-]+)\\s*>>>([\\s\\S]*?)(?:<<<ENDFILE>>>|(?=<<<FILE:)|\$)")
+        val tagPattern = Regex("<<<FILE:\\s*([a-zA-Z0-9_.-/]+)\\s*>>>([\\s\\S]*?)(?:<<<ENDFILE>>>|(?=<<<FILE:)|\$)")
         val tagMatches = tagPattern.findAll(rawContent).toList()
         if (tagMatches.isNotEmpty()) {
             for (match in tagMatches) {
@@ -182,7 +186,7 @@ When the user explicitly asks you to build, create, or save a website project, w
         }
 
         // 2. Try // FILE: filename or /* FILE: filename */ or # FILE: filename or <!-- FILE: filename -->
-        val commentPattern = Regex("(?:^|\\n)(?:\\/\\/|#|<!--|/\\*)\\s*FILE:\\s*([a-zA-Z0-9_.-]+)(?:\\s*-->|\\s*\\*/)?\\s*\\n")
+        val commentPattern = Regex("(?:^|\\n)(?:\\/\\/|#|<!--|/\\*)\\s*FILE:\\s*([a-zA-Z0-9_.-/]+)(?:\\s*-->|\\s*\\*/)?\\s*\\n")
         val commentMatches = commentPattern.findAll(rawContent).toList()
         if (commentMatches.isNotEmpty()) {
             for (i in commentMatches.indices) {
@@ -266,7 +270,7 @@ When the user explicitly asks you to build, create, or save a website project, w
     ): ProcessedChatResult {
         val isBangla = language.contains("Bangla", ignoreCase = true) || language.contains("Bengali", ignoreCase = true)
 
-        if (isJustCode || isJustCodeRequest(raw)) {
+        if (isJustCode) {
             val firstBlock = extractFirstCodeBlock(raw)
             if (firstBlock != null) {
                 val (lang, code) = firstBlock
@@ -381,6 +385,7 @@ When the user explicitly asks you to build, create, or save a website project, w
                 externalDir?.let { File(it, "index.html").writeText(html.trim()) }
             } else {
                 for ((name, content) in files) {
+                    if (!isValidFilePath(name)) continue
                     File(internalDir, name).writeText(content)
                     externalDir?.let { File(it, name).writeText(content) }
                 }
@@ -451,6 +456,7 @@ When the user explicitly asks you to build, create, or save a website project, w
             savedFiles.add(indexFile)
         } else {
             for ((name, content) in files) {
+                if (!isValidFilePath(name)) continue
                 val f = File(projDir, name)
                 f.writeText(content)
                 savedFiles.add(f)

@@ -61,8 +61,8 @@ class MiraNotificationListener : NotificationListenerService() {
                 if (title.isBlank() || text.isBlank()) return@launch
 
                 // Skip group notifications — auto-replying into a group is wrong (1:1 only)
-                val messagingStyle = notification.messagingStyle
-                if (messagingStyle is Notification.MessagingStyle && messagingStyle.isGroupConversation) {
+                val messagingStyle = Notification.MessagingStyle.extractMessagingStyleFromNotification(notification)
+                if (messagingStyle?.isGroupConversation == true) {
                     Log.w(TAG, "Skipping group conversation notification: $title")
                     return@launch
                 }
@@ -70,12 +70,8 @@ class MiraNotificationListener : NotificationListenerService() {
                     Log.w(TAG, "Skipping group notification (sbn.isGroup): $title")
                     return@launch
                 }
-                if (extras.getBoolean(Notification.EXTRA_IS_GROUP_SUMMARY, false)) {
-                    Log.w(TAG, "Skipping group summary notification (EXTRA_IS_GROUP_SUMMARY): $title")
-                    return@launch
-                }
-                if (notification.isGroupSummary) {
-                    Log.w(TAG, "Skipping group summary notification (isGroupSummary): $title")
+                if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) {
+                    Log.w(TAG, "Skipping group summary notification (FLAG_GROUP_SUMMARY): $title")
                     return@launch
                 }
 

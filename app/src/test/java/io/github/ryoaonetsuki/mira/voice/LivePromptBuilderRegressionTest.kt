@@ -35,7 +35,6 @@ class LivePromptBuilderRegressionTest {
                 language = lang,
                 personaType = PersonaType.MIRA,
                 dateLine = dateLine,
-                searchAckPhrase = ackPhrase
             )
 
             if (!isBangla) {
@@ -172,7 +171,6 @@ class LivePromptBuilderRegressionTest {
             language = "Bangla",
             personaType = PersonaType.MIRA,
             dateLine = "",
-            searchAckPhrase = ""
         )
         assertTrue(prompt.contains("you CAN control the user's phone"))
         assertTrue(prompt.contains("answer YES in your own friendly words"))

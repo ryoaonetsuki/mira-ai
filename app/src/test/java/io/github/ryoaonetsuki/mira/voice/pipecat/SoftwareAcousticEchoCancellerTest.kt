@@ -396,8 +396,8 @@ class SoftwareAcousticEchoCancellerTest {
         val playback = synthesizeTonePcm(24000, 440.0, 0.35, 1.0)
         aec.pushPlaybackAudio(playback)
 
-        // 2. Microphone captures echo from Mira's voice (amplitude 0.20 -> RMS ~ 0.141f)
-        val micEcho = synthesizeTonePcm(16000, 440.0, 0.20, 1.0)
+        // 2. Microphone captures echo from Mira's voice (amplitude 0.10 -> RMS ~ 0.071f)
+        val micEcho = synthesizeTonePcm(16000, 440.0, 0.10, 1.0)
         val cleanedEcho = aec.processMicrophoneAudio(micEcho)
 
         val rawMicRms = calculateAudioLevel(micEcho)
@@ -406,8 +406,8 @@ class SoftwareAcousticEchoCancellerTest {
         // Under pass-through fallback, cleaned mic audio equals raw mic audio
         assertEquals("Cleaned mic RMS must match raw echo RMS under pass-through fallback", rawMicRms, cleanedMicRms, 0.001f)
 
-        // EchoGate with bot talking at 0.25f: threshold = 0.25 * 1.5 + 0.05 = 0.425f
-        // Cleaned echo RMS (~0.141f) is below threshold (0.425f), so EchoGate drops it
+        // EchoGate with bot talking at 0.25f: threshold = 0.25 * 0.3 + 0.02 = 0.095f
+        // Cleaned echo RMS (~0.071f) is below threshold (0.095f), so EchoGate drops it
         val shouldForwardEcho = EchoGate.shouldForward(cleanedMicRms, 0.25f, isBotTalking = true, echoGuardEnabled = true)
         assertFalse("Cleaned echo frame MUST be dropped by EchoGate", shouldForwardEcho)
 
@@ -416,7 +416,7 @@ class SoftwareAcousticEchoCancellerTest {
         val cleanedUser = aec.processMicrophoneAudio(userSpeech)
         val userRms = calculateAudioLevel(cleanedUser)
 
-        // User RMS (~0.460f) exceeds threshold (0.425f), so EchoGate forwards it
+        // User RMS (~0.460f) exceeds threshold (0.095f), so EchoGate forwards it
         val shouldForwardUser = EchoGate.shouldForward(userRms, 0.25f, isBotTalking = true, echoGuardEnabled = true)
         assertTrue("User barge-in frame MUST be forwarded by EchoGate", shouldForwardUser)
     }

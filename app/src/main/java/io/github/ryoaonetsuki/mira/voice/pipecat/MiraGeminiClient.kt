@@ -92,6 +92,11 @@ fun Value.toJsonString(json: Json): String =
 
 private fun <E> AtomicReference<E?>.take(): E? = getAndSet(null)
 
+private fun truncateLog(s: String?): String {
+    val t = s ?: ""
+    return if (t.length > 80) "${t.take(80)}...[len=${t.length}]" else t
+}
+
 private data class AppendedMessage(
     val role: String,
     val content: String
@@ -379,6 +384,10 @@ class MiraGeminiClient private constructor(
                     },
                     onLatencyMeasured = { latency ->
                         aec.referenceDelayMs = latency
+                    },
+                    onError = { error ->
+                        Log.e(TAG, "AudioOut error: ${error.message}")
+                        postEvent(ClientThreadEvent.MicErrorReceived(error))
                     }
                 )
 
@@ -655,17 +664,25 @@ class MiraGeminiClient private constructor(
                             val droppedFrameCount = AtomicInteger(0)
                             val lastDropLogTimeMs = AtomicLong(0L)
 
+                            val onsetBuffer = OnsetBuffer()
+
                             audioInCallback.set { buf ->
                                 val cleanedBuf = aec.processMicrophoneAudio(buf)
                                 val micRms = calculateAudioLevel(cleanedBuf)
                                 val effectiveBotLevel = echoRouter.getEffectiveBotLevel()
                                 val botTalking = echoRouter.isBotTalking()
+                                val now = System.currentTimeMillis()
 
                                 if (EchoGate.shouldForward(micRms, effectiveBotLevel, botTalking, config.echoGuardEnabled)) {
+                                    // Flush any buffered onset frames, then send current frame
+                                    for (frame in onsetBuffer.flush(now)) {
+                                        postEvent(ClientThreadEvent.SendAudioData(frame))
+                                    }
                                     postEvent(ClientThreadEvent.SendAudioData(cleanedBuf))
                                 } else {
+                                    // Buffer gated-out frame for potential onset flush
+                                    onsetBuffer.add(cleanedBuf, now)
                                     val dropped = droppedFrameCount.incrementAndGet()
-                                    val now = System.currentTimeMillis()
                                     val lastLog = lastDropLogTimeMs.get()
                                     if (now - lastLog >= 1000L && lastDropLogTimeMs.compareAndSet(lastLog, now)) {
                                         droppedFrameCount.set(0)
@@ -704,11 +721,11 @@ class MiraGeminiClient private constructor(
                             if (event.finished) {
                                 val finalTurn = userTurnBuffer.completeTurn(resetBuffer = false) ?: accumulated
                                 if (finalTurn.isNotBlank()) {
-                                    Log.i(TAG, "User transcript (final): $finalTurn")
+                                    Log.d(TAG, "User transcript (final): ${truncateLog(finalTurn)}")
                                     listenerRef.get()?.onUserTranscript(finalTurn, true)
                                 }
                             } else if (accumulated.isNotBlank()) {
-                                Log.i(TAG, "User transcript (partial): $accumulated")
+                                Log.d(TAG, "User transcript (partial): ${truncateLog(accumulated)}")
                                 listenerRef.get()?.onUserTranscript(accumulated, false)
                             }
                         }
@@ -717,7 +734,7 @@ class MiraGeminiClient private constructor(
                             userTurnBuffer.completeTurn(resetBuffer = false)?.let { finalTurn ->
                                 listenerRef.get()?.onUserTranscript(finalTurn, true)
                             }
-                            Log.i(TAG, "Model transcript: ${event.text}")
+                            Log.d(TAG, "Model transcript: ${truncateLog(event.text)}")
                             listenerRef.get()?.onModelTranscript(event.text)
                         }
 

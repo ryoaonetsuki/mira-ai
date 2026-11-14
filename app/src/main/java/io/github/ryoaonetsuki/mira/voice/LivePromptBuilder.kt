@@ -35,7 +35,7 @@ object LivePromptBuilder {
      * Builds the web search rule for the Live session system prompt (Milestone 3).
      * The model narrates the search itself while web_search executes and receives results as a tool response.
      */
-    fun buildWebSearchRule(language: String, searchAckPhrase: String = ""): String {
+    fun buildWebSearchRule(language: String): String {
         val lang = language.ifBlank { DEFAULT_LANGUAGE }
         val langLabel = if (LanguageUtils.isBangla(lang)) "Bangla" else lang
         return "When the user asks you to search or look something up, or asks about something you do not know or have no latest news about: call the `web_search` tool to get fresh web search results. Narrate briefly in $langLabel while the search runs, then speak the final answer directly from the fresh search results. Never stay silent while searching, and never guess when you do not know. For normal voice talk answer directly and fast."
@@ -76,7 +76,7 @@ object LivePromptBuilder {
             "`web_search` (searches web for information), `run_connector_command` (runs connector actions), `run_skill` (replays a saved skill macro in one tool call), " +
             "`remember_fact` (saves durable facts to memory), `recall_memory` (recalls saved facts), and `forget_memory` (deletes saved facts). " +
             "You CAN and MUST act on the phone whenever asked — NEVER claim you cannot control the phone, open apps, or take actions. " +
-            "When an element has no text label (like an icon-only search magnifier), call click_text with its description or click_at — vision fallback will locate and tap it. " +
+            "When an element has no text label (like an icon-only search magnifier), call click_text with its description — never guess click_at coordinates. click_at is allowed only with coordinates that came from a tool result (get_screen numbers). Or use show_numbers + tap_number. " +
             "OFF-TARGET RULE: If the screen is not currently on the target application needed for the user's goal, you MUST call `open_app` first before attempting to click or type. " +
             "Use `show_numbers` and `tap_number` ONLY when the user explicitly asks for numbers (e.g. \"show numbers\" or \"tap number N\"). Never volunteer numbers, and never tell the user to tap a number themselves. Numbers are 1-based and refer only to tappable elements; \"show numbers\" shows the overlay, \"hide numbers\" hides it. " +
             "When the user asks for a phone action or search: CALL THE TOOL IMMEDIATELY. " +
@@ -104,7 +104,6 @@ object LivePromptBuilder {
         toneDescription: String = "",
         identityRule: String = "",
         dateLine: String = "",
-        searchAckPhrase: String = "",
         customInstructions: String = "",
         activeRules: String = "",
         memorySection: String = "",
@@ -112,7 +111,7 @@ object LivePromptBuilder {
     ): String {
         val lang = language.ifBlank { DEFAULT_LANGUAGE }
         val languageRule = buildLanguageRule(lang)
-        val webSearchRule = buildWebSearchRule(lang, searchAckPhrase)
+        val webSearchRule = buildWebSearchRule(lang)
         val toolUseRule = buildToolUseRule(lang)
 
         val effectiveAssistantName = if (personaType == PersonaType.ORION) "Orion" else assistantName.ifBlank { "Mira" }

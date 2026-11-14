@@ -37,8 +37,8 @@ class VoiceTurnRouterTest {
     @Test
     fun phoneControlQuestionRoutesToLiveAndNeverToTts() {
         assertEquals(VoiceTurnRoute.LIVE_ANSWERS, VoiceTurnRouter.route(phoneQ, emptyList(), automationRunning = false))
-        // And even in the worst case the TTS policy forbids it while Live is connected.
-        assertFalse(VoiceTurnRouter.mayUseFallbackTts(liveConnected = true, userInitiated = true))
+        // And there is no TTS fallback path at all (VO-M6: TTS lives only in the voice preview).
+        assertTrue("No TTS fallback action may exist (VO-M6: TTS lives only in the voice preview)", WatchdogAction.values().none { it.name.contains("TTS") })
     }
 
     @Test
@@ -77,16 +77,15 @@ class VoiceTurnRouterTest {
     // ---- single voice / spontaneous TTS ----
     @Test
     fun ttsNeverSpeaksWhileLiveConnected() {
-        for (userInitiated in listOf(true, false)) {
-            assertFalse(VoiceTurnRouter.mayUseFallbackTts(liveConnected = true, userInitiated = userInitiated))
-        }
+        // No TTS fallback exists in any state — the watchdog has no TTS action (VO-M6).
+        assertTrue("No TTS fallback action may exist (VO-M6: TTS lives only in the voice preview)", WatchdogAction.values().none { it.name.contains("TTS") })
     }
 
     @Test
-    fun ttsFallbackOnlyWhenNoLiveAndUserInitiated() {
-        assertTrue(VoiceTurnRouter.mayUseFallbackTts(liveConnected = false, userInitiated = true))
-        // spontaneous (session start/reconnect/model volunteer): nothing spoken
-        assertFalse(VoiceTurnRouter.mayUseFallbackTts(liveConnected = false, userInitiated = false))
+    fun ttsFallbackNeverExistsInAnyState() {
+        // VO-M6: the TTS fallback was deleted — disconnected + user-initiated runs
+        // the direct path and surfaces the outcome as text/notification, never TTS.
+        assertTrue("No TTS fallback action may exist (VO-M6: TTS lives only in the voice preview)", WatchdogAction.values().none { it.name.contains("TTS") })
     }
 
     @Test
@@ -100,7 +99,7 @@ class VoiceTurnRouterTest {
     fun sessionStartSpeaksNothing_noGreetingOrIntroInVoiceTurnPolicy() {
         // No user speech -> no turn -> no route executes; nothing is user-initiated.
         assertEquals(VoiceTurnRoute.IGNORE_ECHO, VoiceTurnRouter.route("", emptyList(), false))
-        assertFalse(VoiceTurnRouter.mayUseFallbackTts(liveConnected = false, userInitiated = false))
+        assertTrue("No TTS fallback action may exist (VO-M6: TTS lives only in the voice preview)", WatchdogAction.values().none { it.name.contains("TTS") })
     }
 
     // ---- output gate ----

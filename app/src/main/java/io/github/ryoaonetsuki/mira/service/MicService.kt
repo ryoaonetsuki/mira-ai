@@ -221,9 +221,10 @@ class MicService : Service() {
 
     private lateinit var resumptionStore: SessionResumptionStore
 
-    private val automationBridge by lazy {
+    private val automationBridgeLazy = lazy {
         io.github.ryoaonetsuki.mira.automation.MiraAutomationBridge.getInstance(applicationContext)
     }
+    private val automationBridge by automationBridgeLazy
 
     private val defaultAutomationPort by lazy {
         ScreenAutomationService(applicationContext)
@@ -1561,7 +1562,7 @@ class MicService : Service() {
         postCallWatchdog.cancel()
         userTurnEscalator.cancel()
         sessionGenerationToken.incrementAndGet()
-        if (cancelAutomation) {
+        if (cancelAutomation && automationBridgeLazy.isInitialized()) {
             automationBridge.cancel()
         }
         synchronized(functionCallJobs) { functionCallJobs.forEach { it.cancel() } }

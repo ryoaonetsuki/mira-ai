@@ -47,14 +47,15 @@ internal fun calculateAudioLevel(pcmData: ByteArray): Float {
  */
 object EchoGate {
     /**
-     * Safety multiplier over playback level (+0 dB).
+     * Safety multiplier over playback level.
      *
      * The gate sees POST-AEC audio (platform AEC + WebRTC AEC3 already ran upstream), so the
-     * residual echo it must block is far below raw speaker-to-mic coupling. A ratio of 1.0f
-     * lowers the bar so normal near-field user speech (~0.1-0.2 RMS) can barge in during
-     * playback instead of being dropped as misheard turns.
+     * residual echo it must block is far below raw speaker-to-mic coupling. The ratio is kept
+     * well below 1.0 (0.3f) so normal near-field user speech (~0.1-0.2 RMS) can barge in during
+     * loud playback instead of being dropped. Residual echo that slips past the gate is caught
+     * by WebRTC AEC3 and the transcript-echo filter (VoiceEchoDetector).
      */
-    const val RATIO: Float = 1.0f
+    const val RATIO: Float = 0.3f
 
     /**
      * Absolute noise floor in normalized RMS [0.0, 1.0].

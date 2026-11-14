@@ -216,6 +216,7 @@ fun ChatScreen(
 
     var isSending by remember { mutableStateOf(false) }
     var streamingMessageText by remember { mutableStateOf<String?>(null) }
+    var isWaitingForFirstChunk by remember { mutableStateOf(false) }
     var isBuildingFileNow by remember { mutableStateOf(false) }
     val historyDrawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var historySearchQuery by remember { mutableStateOf("") }
@@ -631,6 +632,7 @@ fun ChatScreen(
             }
             isSending = true
             isBuildingFileNow = false
+            isWaitingForFirstChunk = true
 
             activeGenerationJob = MiraAppScope.scope.launch {
                 var replySaved = false
@@ -921,6 +923,7 @@ fun ChatScreen(
                                 }
                                 if (!anyChunkReceived) {
                                     anyChunkReceived = true
+                                    isWaitingForFirstChunk = false
                                     streamingMessageText = ""
                                 }
                                 accumulated.append(chunk)
@@ -1132,9 +1135,7 @@ fun ChatScreen(
             if (lastModel != null && lastModel.id > lastUser.id) {
                 withContext(Dispatchers.IO) {
                     db.chatDao().ensureConversationExists(currentConversationId)
-                    db.chatDao().deleteMessagesForConversation(currentConversationId)
-                    val keep = messages.filter { it.id <= lastUser.id }
-                    keep.forEach { safeInsertMessage(context, db, it) }
+                    db.chatDao().deleteMessageById(lastModel.id)
                 }
             }
             sendMessage(overrideText = lastUser.content)
@@ -1747,7 +1748,7 @@ fun ChatScreen(
                     }
 
                     // Progressive streaming response - Free flowing on canvas, NO Box wrapper
-                    if (streamingMessageText != null || (isThinking && !streamingThinkingText.isNullOrBlank())) {
+                    if (streamingMessageText != null || (isThinking && !streamingThinkingText.isNullOrBlank()) || isWaitingForFirstChunk) {
                         item(key = "streaming_response", contentType = "streaming") {
                             Column(
                                 modifier = Modifier
@@ -1772,6 +1773,14 @@ fun ChatScreen(
                                         text = streamingMessageText ?: "",
                                         textColor = palette.textPrimary
                                     )
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.Start,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TypingDotsIndicator(palette.primary)
+                                    }
                                 }
 
                                 if (isBuildingFileNow) {
@@ -2598,10 +2607,10 @@ fun HtmlPreviewDialog(
                 AndroidView(
                     factory = { ctx ->
                         android.webkit.WebView(ctx).apply {
-                            settings.javaScriptEnabled = true
+                            settings.javaScriptEnabled = false
                             settings.domStorageEnabled = true
                             webViewClient = android.webkit.WebViewClient()
-                            loadDataWithBaseURL(null, htmlCode, "text/html", "UTF-8", null)
+                            loadDataWithBaseURL("https://localhost/", htmlCode, "text/html", "UTF-8", null)
                         }
                     },
                     modifier = Modifier

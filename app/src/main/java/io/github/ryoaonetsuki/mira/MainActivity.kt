@@ -20,10 +20,21 @@ class MainActivity : FragmentActivity() {
 
     private val pendingNavigationIntent = mutableStateOf<Intent?>(null)
 
+    private fun normalizeIntent(intent: Intent): Intent? {
+        if (intent.action == Intent.ACTION_SEND) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+            if (text.isNullOrBlank()) return null
+            return intentToChatDeepLink(intent)?.let {
+                Intent(Intent.ACTION_VIEW).setData(android.net.Uri.parse(it))
+            }
+        }
+        return intent
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingNavigationIntent.value = intent
+        pendingNavigationIntent.value = normalizeIntent(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,6 +42,8 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         val userPrefs = UserPreferences(applicationContext)
+
+        pendingNavigationIntent.value = normalizeIntent(intent)
 
         setContent {
             val themeMode by userPrefs.themeModeFlow.collectAsState(initial = "System")

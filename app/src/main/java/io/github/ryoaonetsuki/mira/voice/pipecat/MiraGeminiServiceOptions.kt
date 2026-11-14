@@ -100,11 +100,11 @@ data class MiraGeminiServiceOptions(
                                 "properties" to Value.Object(
                                     "x" to Value.Object(
                                         "type" to Value.Str("NUMBER"),
-                                        "description" to Value.Str("X coordinate in screen pixels or 0-1000 scale")
+                                        "description" to Value.Str("X coordinate in screen pixels")
                                     ),
                                     "y" to Value.Object(
                                         "type" to Value.Str("NUMBER"),
-                                        "description" to Value.Str("Y coordinate in screen pixels or 0-1000 scale")
+                                        "description" to Value.Str("Y coordinate in screen pixels")
                                     )
                                 ),
                                 "required" to Value.Array(Value.Str("x"), Value.Str("y"))

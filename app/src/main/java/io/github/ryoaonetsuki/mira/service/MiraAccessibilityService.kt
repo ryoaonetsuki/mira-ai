@@ -27,6 +27,7 @@ import io.github.ryoaonetsuki.mira.automation.agent.TaskStep
 import io.github.ryoaonetsuki.mira.automation.agent.TextField
 import io.github.ryoaonetsuki.mira.automation.agent.Verification
 import io.github.ryoaonetsuki.mira.automation.agent.typeAndVerifyBlocking
+import io.github.ryoaonetsuki.mira.automation.agent.DEFAULT_SCREEN_WIDTH
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -446,7 +447,7 @@ class MiraAccessibilityService : AccessibilityService() {
     fun pinch(centerX: Float, centerY: Float, zoomIn: Boolean): Boolean {
         return try {
             val metrics = runCatching { resources?.displayMetrics }.getOrNull()
-            val w = metrics?.widthPixels?.takeIf { it > 0 } ?: 1080
+            val w = metrics?.widthPixels?.takeIf { it > 0 } ?: DEFAULT_SCREEN_WIDTH
             val h = metrics?.heightPixels?.takeIf { it > 0 } ?: 1920
             val cx = centerX.coerceIn(0f, w.toFloat())
             val cy = centerY.coerceIn(0f, h.toFloat())
@@ -1031,10 +1032,16 @@ class MiraAccessibilityService : AccessibilityService() {
                     "type" -> {
                         val text = (event["text"] as? String) ?: ""
                         if (text.isNotEmpty()) {
+                            // AU-M6: record which field was typed into, so replay
+                            // can resolve the same field instead of typing blind.
+                            // The type event carries the source node's viewId.
+                            val fieldId = (event["viewId"] as? String)?.trim().orEmpty()
+                            val typeParams = mutableMapOf<String, Any?>("text" to text)
+                            if (fieldId.isNotEmpty()) typeParams["fieldId"] = fieldId
                             steps.add(
                                 TaskStep(
                                     action = TaskStep.ACTION_TYPE_TEXT,
-                                    params = mapOf("text" to text),
+                                    params = typeParams,
                                     reasoning = "Macro enter text \"$text\""
                                 )
                             )

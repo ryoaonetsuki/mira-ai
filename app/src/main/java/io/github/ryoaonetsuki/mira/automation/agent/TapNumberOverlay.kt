@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
@@ -34,17 +35,23 @@ class TapNumberOverlay(
     @Volatile
     private var isShowing: Boolean = false
     private val handler: Handler = Handler(Looper.getMainLooper())
+    private val refreshThread: HandlerThread = HandlerThread("TapNumberOverlayRefresh").apply { start() }
+    private val refreshHandler: Handler = Handler(refreshThread.looper)
 
     private val refreshRunnable: Runnable = object : Runnable {
         override fun run() {
             if (!isShowing) return
-            try {
-                val nodes = dump()
-                val numbered = UiNodeMatcher.tappableNumbered(nodes)
-                refresh(numbered)
-            } catch (_: Throwable) {}
-            if (isShowing) {
-                handler.postDelayed(this, 750L)
+            refreshHandler.post {
+                try {
+                    val nodes = dump()
+                    val numbered = UiNodeMatcher.tappableNumbered(nodes)
+                    handler.post {
+                        if (isShowing) {
+                            refresh(numbered)
+                            handler.postDelayed(refreshRunnable, 750L)
+                        }
+                    }
+                } catch (_: Throwable) {}
             }
         }
     }
@@ -118,7 +125,7 @@ class TapNumberOverlay(
 
     private fun showInternal(numbered: List<Pair<Int, ScreenNode>>): ShowOverlayResult {
         container.removeAllViews()
-        for ((number, node) in numbered.take(50)) {
+        for ((number, node) in numbered.take(MAX_BADGES)) {
             container.addView(badgeView(number), layoutParamsFor(node))
         }
         if (!isShowing) {
@@ -156,7 +163,7 @@ class TapNumberOverlay(
     private fun refreshInternal(numbered: List<Pair<Int, ScreenNode>>) {
         if (!isShowing) return
         container.removeAllViews()
-        for ((number, node) in numbered.take(50)) {
+        for ((number, node) in numbered.take(MAX_BADGES)) {
             container.addView(badgeView(number), layoutParamsFor(node))
         }
     }
@@ -185,6 +192,18 @@ class TapNumberOverlay(
 
     companion object {
         private const val TAG = "TapNumberOverlay"
+        const val MAX_BADGES = 50
+        private val instances = mutableMapOf<Context, TapNumberOverlay>()
+
+        fun get(context: Context, dump: () -> List<ScreenNode>): TapNumberOverlay {
+            return instances.getOrPut(context) {
+                TapNumberOverlay(context.applicationContext, dump)
+            }
+        }
+
+        fun release(context: Context) {
+            instances.remove(context)?.hide()
+        }
     }
 }
 

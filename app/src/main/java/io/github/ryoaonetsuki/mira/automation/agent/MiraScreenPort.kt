@@ -11,6 +11,10 @@ import kotlinx.coroutines.delay
 /** 屏幕读屏的默认滑动时长。 */
 const val DEFAULT_SWIPE_MS = 400L
 
+/** Fallback screen size used when display metrics are unavailable. */
+const val DEFAULT_SCREEN_WIDTH = 1080
+const val DEFAULT_SCREEN_HEIGHT = 2400
+
 /**
  * 读一次屏的结果。[changedDuringRead]:读这份列表的前后界面不一致;[protected]:受系统防截屏保护;
  * [hasWindow]:屏上有 App 窗口;[unreadableApp]:读不到窗口内容但知道前台是哪个 App 时的包名;

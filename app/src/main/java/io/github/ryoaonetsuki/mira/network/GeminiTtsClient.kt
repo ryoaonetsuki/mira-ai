@@ -152,7 +152,7 @@ class GeminiTtsClient(private val context: Context) {
                     .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
                     .build()
             } else {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
                 Request.Builder()
                     .url(url)
                     .addHeader("Content-Type", "application/json")

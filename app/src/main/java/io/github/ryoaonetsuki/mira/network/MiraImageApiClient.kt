@@ -124,9 +124,6 @@ class MiraImageApiClient(
         if (trimmed.isEmpty()) {
             return MiraImageResult.Failure("Prompt cannot be empty")
         }
-        if (trimmed.length > 1000) {
-            return MiraImageResult.Failure("Prompt too long: maximum 1000 characters allowed")
-        }
 
         val request = buildRequest(trimmed)
 
@@ -176,16 +173,12 @@ class MiraImageApiClient(
         }
 
         if (!response.isSuccessful) {
-            val errorMessage = when {
-                response.code == 429 -> extractErrorMessage(bodyString, "Too many requests. Please try again later.")
-                response.code == 502 || response.code >= 500 -> "Transient server error (HTTP ${response.code}). Please try again."
-                else -> extractErrorMessage(bodyString, response.message)
-            }
+            val errorMessage = extractErrorMessage(bodyString, response.message)
             return MiraImageResult.Failure(
                 message = errorMessage,
                 statusCode = response.code,
                 isAuthError = response.code == 401,
-                isQuotaOrRateLimit = response.code == 429
+                isQuotaOrRateLimit = response.code == 429 || response.code == 502
             )
         }
 

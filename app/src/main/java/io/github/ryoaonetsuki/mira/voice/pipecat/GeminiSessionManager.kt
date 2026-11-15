@@ -212,6 +212,8 @@ class GeminiSessionManager(
     private val _audioLevel = MutableStateFlow(0f)
     val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
 
+    val sessionId: String = java.util.UUID.randomUUID().toString()
+
     private var currentClient: SessionClient? = null
     private var stage4WatchdogJob: Job? = null
     private var reconnectJob: Job? = null
@@ -353,6 +355,9 @@ class GeminiSessionManager(
         activeFunctionCalls.updateAndGet { (it - 1).coerceAtLeast(0) }
         currentClient?.sendFunctionResponse(id, name, response)
     }
+
+    /** Returns the number of in-flight function calls. */
+    fun activeFunctionCallCount(): Int = activeFunctionCalls.get()
 
     private fun closeCurrentClient() {
         val client = currentClient

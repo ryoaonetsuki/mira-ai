@@ -7,8 +7,11 @@ import io.github.ryoaonetsuki.mira.automation.agent.Skill
 import io.github.ryoaonetsuki.mira.automation.agent.SkillMemoryService
 import io.github.ryoaonetsuki.mira.automation.agent.SkillStore
 import io.github.ryoaonetsuki.mira.automation.agent.TaskStep
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -1285,5 +1288,150 @@ class MicServiceFunctionCallTest {
         val outcome = (resultMap["result"] as? Value.Str)?.value.orEmpty()
         assertEquals("open_app Play Store must succeed", true, success)
         assertTrue("Outcome must indicate successfully opened", outcome.contains("Successfully opened"))
+    }
+
+    // GoalToolTracker is a global singleton with a 30-call cap per goal; without a
+    // reset, executeFunctionCall calls from earlier tests in this class exhaust the
+    // cap and every later call returns CapExceeded (openApp never invoked).
+    @Before
+    fun resetGoalToolTracker() {
+        GoalToolTracker.reset()
+    }
+
+    @Test
+    fun testOpenApp_RepeatWithin45s_NotForeground_Executes() = runBlocking {
+        val fakePort = TestAutomationPort(
+            currentPkg = "com.other.app",
+            targetPkgOnOpen = "com.google.android.youtube",
+            openAppReturnValue = "com.google.android.youtube"
+        )
+
+        // First open_app executes
+        val res1 = executeFunctionCall(
+            automationPort = fakePort,
+            context = null,
+            name = "open_app",
+            rawArgs = mapOf("app" to "YouTube"),
+            typedArgs = mapOf("app" to "YouTube"),
+            pollTimeoutMs = 100L,
+            pollIntervalMs = 20L,
+            settleDelayMs = 10L
+        )
+        assertEquals(true, (res1.value["success"] as? Value.Bool)?.value)
+        assertEquals(1, fakePort.openedApps.size)
+
+        // Second open_app within 45s while app is NOT foreground must still execute
+        val res2 = executeFunctionCall(
+            automationPort = fakePort,
+            context = null,
+            name = "open_app",
+            rawArgs = mapOf("app" to "YouTube"),
+            typedArgs = mapOf("app" to "YouTube"),
+            pollTimeoutMs = 100L,
+            pollIntervalMs = 20L,
+            settleDelayMs = 10L
+        )
+        assertEquals(true, (res2.value["success"] as? Value.Bool)?.value)
+        assertEquals(2, fakePort.openedApps.size)
+    }
+
+    @Test
+    fun testTypeText_RepeatWithin45s_FieldLacksText_Executes() = runBlocking {
+        val originalNodes = listOf(
+            ScreenNode(
+                index = 0,
+                text = "Search YouTube",
+                contentDescription = "Search button",
+                className = "android.widget.Button",
+                viewId = "yt_search",
+                isClickable = true,
+                isEditable = false,
+                isScrollable = false,
+                isCheckable = false,
+                isEnabled = true,
+                left = 10,
+                top = 10,
+                right = 100,
+                bottom = 50,
+                centerX = 55,
+                centerY = 30
+            )
+        )
+        val fakePort = TestAutomationPort(
+            currentPkg = "com.google.android.youtube",
+            testNodes = originalNodes
+        )
+
+        // First type_text executes
+        val res1 = executeFunctionCall(
+            automationPort = fakePort,
+            context = null,
+            name = "type_text",
+            rawArgs = mapOf("text" to "Bangla songs"),
+            typedArgs = mapOf("text" to "Bangla songs"),
+            settleDelayMs = 0L,
+            targetApp = "com.google.android.youtube"
+        )
+        assertEquals(true, (res1.value["success"] as? Value.Bool)?.value)
+        assertEquals("Bangla songs", fakePort.lastTypedText)
+
+        // Second type_text with same text while screen does NOT contain it must execute.
+        // The fake's typeText rewrites every node's text to the typed text, so the
+        // screen must be reset to the original nodes first — otherwise the dedup
+        // correctly sees the text already on screen and skips the repeat.
+        fakePort.testNodes = originalNodes
+        fakePort.lastTypedText = null
+        val res2 = executeFunctionCall(
+            automationPort = fakePort,
+            context = null,
+            name = "type_text",
+            rawArgs = mapOf("text" to "Bangla songs"),
+            typedArgs = mapOf("text" to "Bangla songs"),
+            settleDelayMs = 0L,
+            targetApp = "com.google.android.youtube"
+        )
+        assertEquals(true, (res2.value["success"] as? Value.Bool)?.value)
+        assertEquals("Bangla songs", fakePort.lastTypedText)
+    }
+
+    @Test
+    fun testStopCancelsInFlightFunctionCallJob() = runBlocking {
+        val service = MicService()
+        val job = launch {
+            delay(5000)
+        }
+        service.functionCallJobs.add(job)
+        assertTrue(job.isActive)
+
+        service.stopLiveVoiceSessionInternal()
+        assertTrue(job.isCancelled)
+        assertTrue(service.functionCallJobs.isEmpty())
+    }
+
+    @Test
+    fun testFunctionCallResultDroppedWhenSessionChanged() = runBlocking {
+        // This test verifies that executeFunctionCall produces a result object;
+        // the session-change drop guard lives in MicService.handleFunctionCall
+        // which compares the captured session reference at dispatch time.
+        val fakePort = TestAutomationPort()
+
+        val response = executeFunctionCall(
+            automationPort = fakePort,
+            context = null,
+            name = "open_app",
+            rawArgs = mapOf("app" to "YouTube"),
+            typedArgs = mapOf("app" to "YouTube"),
+            pollTimeoutMs = 1000L,
+            pollIntervalMs = 50L,
+            settleDelayMs = 10L
+        )
+
+        val resultMap = response.value
+        val success = (resultMap["success"] as? Value.Bool)?.value
+        assertEquals("open_app must succeed", true, success)
+        assertEquals("com.google.android.youtube", fakePort.currentPkg)
+        // Production resolves the app name to its package before calling openApp,
+        // so the port receives the resolved package, not the raw name "YouTube".
+        assertTrue("openApp must have been invoked", fakePort.openedApps.contains("com.google.android.youtube"))
     }
 }

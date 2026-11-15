@@ -31,10 +31,7 @@ data class ScreenNode(
     val right: Int,
     val bottom: Int,
     val centerX: Int,
-    val centerY: Int,
-    // Appended last (with a default) so existing positional ScreenNode(...)
-    // constructions keep compiling; populated from the accessibility dump.
-    val isPassword: Boolean = false
+    val centerY: Int
 ) {
     companion object {
         fun fromMap(map: Map<String, Any?>): ScreenNode {
@@ -46,7 +43,6 @@ data class ScreenNode(
                 viewId = map["viewId"]?.toString() ?: "",
                 isClickable = map["isClickable"] as? Boolean ?: false,
                 isEditable = map["isEditable"] as? Boolean ?: false,
-                isPassword = map["isPassword"] as? Boolean ?: false,
                 isScrollable = map["isScrollable"] as? Boolean ?: false,
                 isCheckable = map["isCheckable"] as? Boolean ?: false,
                 isEnabled = map["isEnabled"] as? Boolean ?: true,

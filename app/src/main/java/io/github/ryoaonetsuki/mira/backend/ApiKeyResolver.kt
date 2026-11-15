@@ -33,8 +33,6 @@ class ApiKeyResolver(private val context: Context) {
     val anonKey: String
         get() = SupabaseClient.resolveAnonKey()
 
-    private val serverKeyProbeCache = ServerKeyProbeCache()
-
     suspend fun resolveKey(): KeySource = withContext(Dispatchers.IO) {
         // 1. User's own key in settings (BYOK override)
         val userKey = securePrefs.getGeminiApiKey()
@@ -51,20 +49,7 @@ class ApiKeyResolver(private val context: Context) {
         KeySource.NoKey
     }
 
-    suspend fun resolveKeyOrProxy(): String? = withContext(Dispatchers.IO) {
-        val userKey = securePrefs.getGeminiApiKey()
-        if (!userKey.isNullOrBlank()) {
-            return@withContext userKey
-        }
-        if (isServerKeyConfigured()) {
-            return@withContext USE_PROXY_SENTINEL
-        }
-        return@withContext null
-    }
-
     suspend fun isServerKeyConfigured(): Boolean = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        serverKeyProbeCache.getIfFresh(now)?.let { return@withContext it }
         try {
             val req = Request.Builder()
                 .url("$edgeFunctionUrl?action=health")
@@ -74,16 +59,14 @@ class ApiKeyResolver(private val context: Context) {
                 .build()
 
             httpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext serverKeyProbeCache.lastKnownOrFalse()
-                val body = resp.body?.string() ?: return@withContext serverKeyProbeCache.lastKnownOrFalse()
+                if (!resp.isSuccessful) return@withContext false
+                val body = resp.body?.string() ?: return@withContext false
                 val json = JSONObject(body)
-                val result = json.optBoolean("configured", false)
-                serverKeyProbeCache.put(result, now)
-                return@withContext result
+                json.optBoolean("configured", false)
             }
         } catch (e: Exception) {
             Log.d(TAG, "Server key probe failed: ${e.message}")
-            return@withContext serverKeyProbeCache.lastKnownOrFalse()
+            false
         }
     }
 
@@ -135,6 +118,5 @@ class ApiKeyResolver(private val context: Context) {
 
     companion object {
         private const val TAG = "ApiKeyResolver"
-        const val USE_PROXY_SENTINEL = "__MIRA_USE_PROXY__"
     }
 }

@@ -66,15 +66,15 @@ class EchoGateDrainTest {
     @Test
     fun testBargeIn_LoudSpeechPassesWhileBotTalking() {
         // While bot is talking at high level (botLevel = 0.5f)
-        // Threshold formula (VO-M1, RATIO 0.3): botLevel * 0.3 + FLOOR (0.02) = 0.5 * 0.3 + 0.02 = 0.17f
+        // Threshold formula: botLevel * RATIO (1.5) + FLOOR (0.05) = 0.5 * 1.5 + 0.05 = 0.80f
 
-        // 1. Post-AEC echo residual (micRms = 0.05f) is below threshold: must be dropped
+        // 1. Acoustic echo or normal ambient sound (micRms = 0.40f) is below threshold: must be dropped
         assertFalse(
             "Echo frame below barge-in threshold must be dropped",
-            EchoGate.shouldForward(micRms = 0.05f, botLevel = 0.5f, isBotTalking = true, echoGuardEnabled = true)
+            EchoGate.shouldForward(micRms = 0.40f, botLevel = 0.5f, isBotTalking = true, echoGuardEnabled = true)
         )
 
-        // 2. User speaking loudly right into the mic (micRms = 0.90f > 0.52f): must be forwarded!
+        // 2. User speaking loudly right into the mic (micRms = 0.90f > 0.80f): must be forwarded!
         assertTrue(
             "Loud user speech exceeding bot level * ratio + floor must be forwarded for barge-in",
             EchoGate.shouldForward(micRms = 0.90f, botLevel = 0.5f, isBotTalking = true, echoGuardEnabled = true)
@@ -97,16 +97,16 @@ class EchoGateDrainTest {
         val effectiveBot = router.getEffectiveBotLevel(1200L)
         assertEquals(0.4f, effectiveBot, 0.0001f)
 
-        // Mic hears echo (e.g. 0.1f < 0.4 * 0.3 + 0.02 = 0.14): frame must be dropped!
+        // Mic hears echo (e.g. 0.3f < 0.4 * 1.5 + 0.05 = 0.65): frame must be dropped!
         val shouldForwardEcho = EchoGate.shouldForward(
-            micRms = 0.1f,
+            micRms = 0.3f,
             botLevel = effectiveBot,
             isBotTalking = router.isBotTalking(),
             echoGuardEnabled = true
         )
         assertFalse("Echo during AudioTrack drain must be blocked by the gate", shouldForwardEcho)
 
-        // But loud user barge-in (0.85f > 0.42) still gets through!
+        // But loud user barge-in (0.85f > 0.65) still gets through!
         val shouldForwardUser = EchoGate.shouldForward(
             micRms = 0.85f,
             botLevel = effectiveBot,
@@ -150,7 +150,7 @@ class EchoGateDrainTest {
 
         // 1. During drain at 1050ms: bot is still physically outputting audio
         assertTrue("isBotTalking must remain true during drain after turnComplete", router.isBotTalking(1050L))
-        val echoBlocked = !router.shouldForward(micRms = 0.05f, nowMs = 1050L)
+        val echoBlocked = !router.shouldForward(micRms = 0.20f, nowMs = 1050L)
         assertTrue("Echo during drain must be blocked after turnComplete", echoBlocked)
 
         // 2. Loud barge-in still passes during drain

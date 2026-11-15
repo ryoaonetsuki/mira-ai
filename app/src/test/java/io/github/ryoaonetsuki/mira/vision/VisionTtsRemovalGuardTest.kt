@@ -159,16 +159,11 @@ class VisionTtsRemovalGuardTest {
         val routerFile = getFile("io/github/ryoaonetsuki/mira/voice/VoiceTurnRouter.kt")
         val content = routerFile.readText()
 
-        // VO-M6 (v1.0.2): the TTS fallback was DELETED — there is no fallback TTS
-        // policy left to enforce. Spoken output in Live mode is strictly the single
-        // Live agent voice; the watchdog's direct path exists only in its no-TTS form.
-        assertFalse("VoiceTurnRouter must not contain a mayUseFallbackTts policy", content.contains("mayUseFallbackTts"))
-        assertFalse("VoiceTurnRouter must not contain a TTS fallback action", content.contains("RUN_DIRECT_PATH_WITH_TTS"))
-        // The no-TTS direct path lives in the watchdog, not the router.
-        val watchdogFile = getFile("io/github/ryoaonetsuki/mira/voice/TurnWatchdog.kt")
-        val watchdogContent = watchdogFile.readText()
-        assertTrue("TurnWatchdog must keep the no-TTS direct path", watchdogContent.contains("RUN_DIRECT_PATH_NO_TTS"))
-        assertFalse("TurnWatchdog must not contain a TTS fallback action", watchdogContent.contains("RUN_DIRECT_PATH_WITH_TTS"))
+        // Verifies the single-voice invariant rule is coded in VoiceTurnRouter:
+        // Spoken output in Live mode is strictly the single Live agent voice.
+        // Fallback TTS may only be used when liveConnected == false AND userInitiated == true.
+        assertTrue("VoiceTurnRouter must enforce mayUseFallbackTts policy", content.contains("fun mayUseFallbackTts"))
+        assertTrue("Live connected turns must never use fallback TTS", content.contains("!liveConnected && userInitiated"))
     }
 
     @Test

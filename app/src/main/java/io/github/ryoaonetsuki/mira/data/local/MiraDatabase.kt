@@ -15,10 +15,9 @@ import io.github.ryoaonetsuki.mira.data.local.entities.*
         ChatMessageEntity::class,
         MemoryEntity::class,
         RuleEntity::class,
-        NotificationEntity::class,
-        WhatsAppGuardEntity::class
+        NotificationEntity::class
     ],
-    version = 7,
+    version = 6,
     exportSchema = false
 )
 abstract class MiraDatabase : RoomDatabase() {
@@ -26,7 +25,6 @@ abstract class MiraDatabase : RoomDatabase() {
     abstract fun memoryDao(): MemoryDao
     abstract fun ruleDao(): RuleDao
     abstract fun notificationDao(): NotificationDao
-    abstract fun whatsAppGuardDao(): WhatsAppGuardDao
 
     companion object {
         @Volatile
@@ -68,24 +66,6 @@ abstract class MiraDatabase : RoomDatabase() {
             }
         }
 
-        private val MIGRATION_6_7 = object : Migration(6, 7) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS whatsapp_guard_state (" +
-                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                    "conversation TEXT NOT NULL, " +
-                    "latestIncomingText TEXT NOT NULL, " +
-                    "notificationKey TEXT NOT NULL, " +
-                    "lastRepliedAt INTEGER NOT NULL, " +
-                    "UNIQUE(conversation, latestIncomingText, notificationKey))"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS index_whatsapp_guard_state_conversation_latestIncomingText_notificationKey " +
-                    "ON whatsapp_guard_state(conversation, latestIncomingText, notificationKey)"
-                )
-            }
-        }
-
         fun getInstance(context: Context): MiraDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -93,7 +73,7 @@ abstract class MiraDatabase : RoomDatabase() {
                     MiraDatabase::class.java,
                     "mira_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

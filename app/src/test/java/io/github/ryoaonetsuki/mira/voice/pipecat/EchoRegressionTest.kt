@@ -106,23 +106,22 @@ class EchoRegressionTest {
         assertTrue("Bot must be marked talking", pipeline.router.isBotTalking())
         assertEquals("Bot level must match chunk level", 0.25f, pipeline.router.getRawBotLevel(), 0.005f)
 
-        // 2. Microphone captures acoustic echo back from loudspeaker. The gate sees
-        // POST-AEC audio (VO-M1), so the echo residual is small (e.g. 0.05f).
-        val echoMicFrame = createPcmFrame(0.05f)
+        // 2. Microphone captures acoustic echo back from loudspeaker:
+        // Due to acoustic attenuation / room coupling, mic RMS is <= bot level (e.g. 0.20f)
+        val echoMicFrame = createPcmFrame(0.20f)
         val forwarded = pipeline.onMicCaptureFrame(echoMicFrame, timestampMs = 1000L)
 
         // 3. Verification: Frame must be DROPPED
-        assertFalse("Echo frame at 0.05f with bot at 0.25f MUST be dropped", forwarded)
+        assertFalse("Echo frame at 0.20f with bot at 0.25f MUST be dropped", forwarded)
         assertEquals("Forwarded frames must be empty", 0, pipeline.forwardedFrames.size)
         assertEquals("Dropped frames must have 1 frame", 1, pipeline.droppedFrames.size)
         assertEquals("Interruption count must be 0", 0, pipeline.interruptedCount)
         assertTrue("Mira must still be talking (not cut off)", pipeline.router.isBotTalking())
 
-        // 4. A second, quieter post-AEC residual (0.03f) is also dropped — the gate
-        // keeps dropping echo residuals while Mira is still talking.
-        val quietResidualFrame = createPcmFrame(0.03f)
-        val forwardedQuiet = pipeline.onMicCaptureFrame(quietResidualFrame, timestampMs = 1000L)
-        assertFalse("Post-AEC echo residual at 0.03f with bot at 0.25f MUST be dropped", forwardedQuiet)
+        // 4. Test exact 1:1 coupling (mic RMS == bot level == 0.25f)
+        val equalCouplingMicFrame = createPcmFrame(0.25f)
+        val forwardedEqual = pipeline.onMicCaptureFrame(equalCouplingMicFrame, timestampMs = 1000L)
+        assertFalse("Echo frame at 0.25f matching bot level 0.25f MUST be dropped", forwardedEqual)
         assertEquals(0, pipeline.forwardedFrames.size)
         assertEquals(2, pipeline.droppedFrames.size)
     }
@@ -137,16 +136,16 @@ class EchoRegressionTest {
     fun testOwnerSymptom_RealBargeInForwards_AllowsInterruption() {
         val pipeline = TestFramePipeline(echoGuardEnabled = true)
 
-        // 1. Mira speaks: bot level ≈ 0.25f (threshold = 0.25 * 0.3 + 0.02 = 0.095f)
+        // 1. Mira speaks: bot level ≈ 0.25f (threshold = 0.25 * 1.5 + 0.05 = 0.425f)
         val botAudioOut = createPcmFrame(0.25f)
         pipeline.onMiraAudioOutChunk(botAudioOut, timestampMs = 1000L)
 
-        // 2. User interrupts loudly: mic RMS = 0.65f (> 0.095f threshold)
+        // 2. User interrupts loudly: mic RMS = 0.65f (> 0.425f threshold)
         val loudUserBargeIn = createPcmFrame(0.65f)
         val forwarded = pipeline.onMicCaptureFrame(loudUserBargeIn, timestampMs = 1000L)
 
         // 3. Verification: Frame must be FORWARDED
-        assertTrue("Loud barge-in frame (0.65 > 0.095) MUST be forwarded", forwarded)
+        assertTrue("Loud barge-in frame (0.65 > 0.425) MUST be forwarded", forwarded)
         assertEquals("Forwarded frames must have 1 frame", 1, pipeline.forwardedFrames.size)
         assertEquals("Dropped frames must be 0", 0, pipeline.droppedFrames.size)
 
@@ -198,7 +197,7 @@ class EchoRegressionTest {
         val normalUserPcm = createPcmFrame(0.18f)
         val forwarded = pipeline.onMicCaptureFrame(normalUserPcm, timestampMs = 1950L)
 
-        // 6. With decayed floor 0.02f, 0.18 > 0.02 -> FORWARDED
+        // 6. With decayed floor 0.05f, 0.18 > 0.05 -> FORWARDED
         assertTrue("Normal user speech during bot pause MUST be forwarded", forwarded)
         assertEquals(1, pipeline.forwardedFrames.size)
         assertEquals(0, pipeline.droppedFrames.size)
@@ -226,8 +225,8 @@ class EchoRegressionTest {
         pipeline.onServerTurnComplete()
 
         // 1. During drain window (1050ms): audio is still playing out of speaker.
-        // Leaked echo residual (post-AEC, 0.05f) must be dropped so Mira does not respond to her own words
-        val echoDuringDrain = createPcmFrame(0.05f)
+        // Leaked echo at 0.20f must be dropped so Mira does not respond to her own words
+        val echoDuringDrain = createPcmFrame(0.20f)
         val forwardedEcho = pipeline.onMicCaptureFrame(echoDuringDrain, timestampMs = 1050L)
         assertFalse("Echo during AudioTrack drain after turnComplete MUST be dropped", forwardedEcho)
 
@@ -273,12 +272,12 @@ class EchoRegressionTest {
     fun testSequentialFrames_EchoDroppedThenInterrupted() {
         val pipeline = TestFramePipeline(echoGuardEnabled = true)
 
-        // Mira speaking at 0.30f (threshold = 0.30 * 0.3 + 0.02 = 0.11f)
+        // Mira speaking at 0.30f (threshold = 0.50f)
         val botAudioOut = createPcmFrame(0.30f)
         pipeline.onMiraAudioOutChunk(botAudioOut, timestampMs = 1000L)
 
-        // 5 consecutive echo frames (post-AEC residual, RMS 0.05f)
-        val echoPcm = createPcmFrame(0.05f)
+        // 5 consecutive echo frames (RMS 0.20f)
+        val echoPcm = createPcmFrame(0.20f)
         for (i in 0 until 5) {
             val f = pipeline.onMicCaptureFrame(echoPcm, timestampMs = 1000L + i * 20L)
             assertFalse("Echo frame #$i must be dropped", f)

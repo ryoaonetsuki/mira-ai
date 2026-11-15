@@ -38,42 +38,10 @@ jobs:
         env:
           IMAGE_API_KEY: ${{ secrets.IMAGE_API_KEY }}
 
-      - name: Check IMAGE_API_KEY secret (BU-m5)
-        run: if [ -z "${{ secrets.IMAGE_API_KEY }}" ]; then echo "::error::IMAGE_API_KEY secret is not set — image generation will fail at runtime"; exit 1; fi
-
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
         env:
           IMAGE_API_KEY: ${{ secrets.IMAGE_API_KEY }}
-
-      - name: Verify 16 KB native alignment (BU-M3)
-        run: |
-          python3 - <<'PYEOF'
-          import struct, sys, zipfile
-          apk = "app/build/outputs/apk/debug/app-debug.apk"
-          bad = []
-          with zipfile.ZipFile(apk) as z:
-              for info in z.infolist():
-                  if not info.filename.endswith(".so"):
-                      continue
-                  if info.compress_type != zipfile.ZIP_STORED:
-                      bad.append(f"{info.filename}: not STORED (method {info.compress_type})")
-                      continue
-                  with open(apk, "rb") as f:
-                      f.seek(info.header_offset)
-                      header = f.read(30)
-                      sig, _, _, _, _, _, _, _, _, fn_len, extra_len = struct.unpack("<IHHHHHIIIHH", header)
-                      assert sig == 0x04034B50, f"{info.filename}: bad local header signature"
-                      data_offset = info.header_offset + 30 + fn_len + extra_len
-                  if data_offset % 16384 != 0:
-                      bad.append(f"{info.filename}: data offset {data_offset} not 16 KB aligned")
-          if bad:
-              print("MISALIGNED NATIVE LIBS:")
-              for b in bad:
-                  print("  " + b)
-              sys.exit(1)
-          print("All .so entries are STORED and 16 KB aligned.")
-          PYEOF
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

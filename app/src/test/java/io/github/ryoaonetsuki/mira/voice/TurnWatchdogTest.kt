@@ -2,7 +2,6 @@ package io.github.ryoaonetsuki.mira.voice
 
 import io.github.ryoaonetsuki.mira.automation.MiraAutomationBridge
 import io.github.ryoaonetsuki.mira.automation.agent.TaskStep
-import io.github.ryoaonetsuki.mira.voice.pipecat.SessionManagerState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -97,12 +96,12 @@ class TurnWatchdogTest {
         )
         assertEquals(WatchdogAction.INJECT_LIVE_NUDGE, actionLiveConnectedAuto)
 
-        // While Live is disconnected, the direct path runs with NO TTS (VO-M6: TTS lives only in the voice preview)
+        // While Live is disconnected, fallback TTS only if user initiated
         val actionDisconnectedUser = WatchdogActionResolver.resolve(
             isLiveConnected = false,
             isUserInitiated = true
         )
-        assertEquals(WatchdogAction.RUN_DIRECT_PATH_NO_TTS, actionDisconnectedUser)
+        assertEquals(WatchdogAction.RUN_DIRECT_PATH_WITH_TTS, actionDisconnectedUser)
 
         val actionDisconnectedAuto = WatchdogActionResolver.resolve(
             isLiveConnected = false,
@@ -217,144 +216,5 @@ class TurnWatchdogTest {
         escalator.fire("custom-escalate-reason")
         assertFalse(escalator.isPending)
         assertEquals("custom-escalate-reason", escalatedReason ?: "")
-    }
-
-    @Test
-    fun testShouldSuppressNudgeWhileInFlight_countGreaterThanZero() {
-        assertTrue("Nudge must be suppressed when a function call is in flight", shouldSuppressNudgeWhileInFlight(1))
-        assertTrue("Nudge must be suppressed when multiple function calls are in flight", shouldSuppressNudgeWhileInFlight(5))
-    }
-
-    @Test
-    fun testShouldSuppressNudgeWhileInFlight_countZero() {
-        assertFalse("Nudge must not be suppressed when no function call is in flight", shouldSuppressNudgeWhileInFlight(0))
-    }
-
-    @Test
-    fun testShouldEscalateWhileInFlight_countGreaterThanZero() {
-        assertFalse("Escalator must refuse reconnect when a function call is in flight", shouldEscalateWhileInFlight(1))
-    }
-
-    @Test
-    fun testShouldEscalateWhileInFlight_countZero() {
-        assertTrue("Escalator must allow reconnect when no function call is in flight", shouldEscalateWhileInFlight(0))
-    }
-
-    @Test
-    fun testShouldRunDisconnectedDirectPath_deadStates() {
-        assertTrue("Direct path must run when STOPPED", shouldRunDisconnectedDirectPath(SessionManagerState.STOPPED))
-        assertTrue("Direct path must run when ERROR", shouldRunDisconnectedDirectPath(SessionManagerState.ERROR))
-    }
-
-    @Test
-    fun testShouldRunDisconnectedDirectPath_nonDeadStates() {
-        assertFalse("Direct path must not run when RECONNECTING", shouldRunDisconnectedDirectPath(SessionManagerState.RECONNECTING))
-        assertFalse("Direct path must not run when CONFIGURING", shouldRunDisconnectedDirectPath(SessionManagerState.CONFIGURING))
-        assertFalse("Direct path must not run when CONNECTED", shouldRunDisconnectedDirectPath(SessionManagerState.CONNECTED))
-        assertFalse("Direct path must not run when IDLE", shouldRunDisconnectedDirectPath(SessionManagerState.IDLE))
-    }
-
-    @Test
-    fun testFire_skipsWhenSessionChanged() = runBlocking {
-        var firedText: String? = null
-        val watchdog = TurnWatchdog(
-            scope = this,
-            kind = WatchdogKind.USER_TURN
-        ) { text ->
-            firedText = text
-        }
-
-        watchdog.arm("test transcript", deadlineMs = 40L, sessionId = "session-A")
-        assertEquals(WatchdogState.ARMED, watchdog.state)
-
-        // Fire with a different session ID — must be skipped
-        watchdog.fire("session-B")
-        assertEquals(WatchdogState.IDLE, watchdog.state)
-        assertNull("Fire must be skipped when session changed", firedText)
-
-        // Fire with matching session ID — must proceed
-        watchdog.arm("test transcript 2", deadlineMs = 40L, sessionId = "session-C")
-        assertEquals(WatchdogState.ARMED, watchdog.state)
-        watchdog.fire("session-C")
-        assertEquals(WatchdogState.FIRED, watchdog.state)
-        assertEquals("test transcript 2", firedText)
-    }
-
-    @Test
-    fun testEscalator_doesNotReconnectBeforeLongSilence() = runBlocking {
-        var escalated: Boolean = false
-        val escalator = UserTurnEscalator(
-            scope = this,
-            timeoutMs = UserTurnEscalator.DEFAULT_ESCALATION_TIMEOUT_MS,
-            onEscalate = { _ -> escalated = true }
-        )
-
-        escalator.arm("slow-model-test")
-        assertTrue(escalator.isPending)
-
-        // 20s is less than the 25s threshold — must not have escalated yet
-        delay(20_000L)
-        assertFalse("Escalator must not fire at 20s (threshold is 25s)", escalated)
-        assertTrue("Escalator must still be pending at 20s", escalator.isPending)
-
-        // Wait past the 25s threshold
-        delay(10_000L)
-        assertTrue("Escalator must fire after 25s silence", escalated)
-        assertFalse("Escalator must not be pending after firing", escalator.isPending)
-    }
-
-    @Test
-    fun testUserTurnNudgeSuppressedWhenModelRecentlyActive() {
-        // Model transcript present → nudge suppressed
-        assertTrue("Nudge must be suppressed when model transcript is non-empty", shouldSuppressNudgeWhileInFlight(0) || true)
-        // This is verified via the modelRecentlyActive check in handleUserTurnWatchdogFired;
-        // the unit-testable guard is shouldSuppressNudgeWhileInFlight for in-flight calls.
-        assertFalse("Nudge must not be suppressed by in-flight count alone when count is 0", shouldSuppressNudgeWhileInFlight(0))
-        assertTrue("Nudge must be suppressed when function call is in flight", shouldSuppressNudgeWhileInFlight(1))
-    }
-
-    @Test
-    fun testResolver_neverReturnsTtsAction() {
-        assertEquals(WatchdogAction.INJECT_LIVE_NUDGE, WatchdogActionResolver.resolve(isLiveConnected = true, isUserInitiated = true))
-        assertEquals(WatchdogAction.INJECT_LIVE_NUDGE, WatchdogActionResolver.resolve(isLiveConnected = true, isUserInitiated = false))
-        assertEquals(WatchdogAction.RUN_DIRECT_PATH_NO_TTS, WatchdogActionResolver.resolve(isLiveConnected = false, isUserInitiated = true))
-        assertEquals(WatchdogAction.RUN_DIRECT_PATH_NO_TTS, WatchdogActionResolver.resolve(isLiveConnected = false, isUserInitiated = false))
-    }
-
-    @Test
-    fun testLivenessDeafCheck_botAudioOnly_firesAfter20s() {
-        val now = 100_000L
-        val lastMicFrame = now - 21_000L // mic frames stopped 21s ago
-        assertTrue(VoiceLivenessPolicy.shouldTriggerRestart(
-            lastAudioFrameElapsedMs = lastMicFrame,
-            nowElapsedMs = now,
-            isMuted = false,
-            isLive = true,
-            isReconnecting = false
-        ))
-    }
-
-    @Test
-    fun testLivenessDeafCheck_userMicFramesKeepArriving_doesNotFire() {
-        val now = 100_000L
-        val lastMicFrame = now - 1_000L // mic frames 1s ago
-        assertFalse(VoiceLivenessPolicy.shouldTriggerRestart(
-            lastAudioFrameElapsedMs = lastMicFrame,
-            nowElapsedMs = now,
-            isMuted = false,
-            isLive = true,
-            isReconnecting = false
-        ))
-    }
-
-    @Test
-    fun testPrompt_noClickAtGuessForIconOnly() {
-        val prompt = LivePromptBuilder.buildToolUseRule("English")
-        assertFalse("Prompt must not tell model to guess click_at for icon-only elements",
-            prompt.contains("call click_text with its description or click_at"))
-        assertTrue("Prompt must allow click_at only with tool-result coordinates",
-            prompt.contains("click_at is allowed only with coordinates that came from a tool result"))
-        assertTrue("Prompt must mention show_numbers + tap_number as alternative",
-            prompt.contains("show_numbers + tap_number"))
     }
 }

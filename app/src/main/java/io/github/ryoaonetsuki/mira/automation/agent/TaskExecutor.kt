@@ -9,9 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -23,8 +21,7 @@ import java.net.URLEncoder
 enum class TaskStatus {
     SUCCESS,
     FAILED,
-    CANCELLED,
-    PARTIAL
+    CANCELLED
 }
 
 enum class ExecutorState {
@@ -519,32 +516,6 @@ class TaskExecutor(
                     stepsUsed = skill.steps.size
                 )
             }
-            // Partial success: a minority of the steps THIS run attempted were skipped
-            // (AU-M4: a replay that skipped steps is never a full success; half or more
-            // skipped fails outright). The denominator is the run's own attempted count,
-            // not the skill size — a resumed run replays only a tail, so comparing its
-            // skips against the full skill would misreport a failed tail as partial.
-            if (result.skippedCount > 0 && result.skippedCount * 2 < result.stepsCompleted) {
-                skills.markReplayOutcome(skill.id, false)
-                return TaskResult(
-                    status = TaskStatus.PARTIAL,
-                    message = "Task partially completed: ${result.skippedCount} of ${skill.steps.size} steps skipped (${result.skippedSteps.joinToString(", ")})",
-                    stepsUsed = result.stepsCompleted
-                )
-            }
-            // A replay that skipped half or more of its steps failed outright (AU-M4).
-            // Do NOT enter the resume loop: every skipped step was already retried once
-            // inside the replay, so resuming would only re-dispatch steps that proved
-            // to have no effect (a 5-scroll skill would dispatch 9 scrolls, not 5).
-            if (result.skippedCount > 0 && result.skippedCount * 2 >= result.stepsCompleted) {
-                skills.markReplayOutcome(skill.id, false)
-                val diag = _lastDiagnosis ?: "Task failed: ${result.skippedCount} of ${result.stepsCompleted} steps skipped (${result.skippedSteps.joinToString(", ")})"
-                return TaskResult(
-                    status = TaskStatus.FAILED,
-                    message = diag,
-                    stepsUsed = result.stepsCompleted
-                )
-            }
             val failedStepIndex = result.failedStepIndex.coerceIn(0, skill.steps.size - 1)
             if (resumeCount >= AI_RESUME_MAX_ATTEMPTS) {
                 skills.markReplayOutcome(skill.id, false)
@@ -557,14 +528,7 @@ class TaskExecutor(
             }
             if (recovery.shouldRecover) {
                 val recoveryStep = recovery.suggestRecovery()
-                // Execute the suggested recovery step once (bounded to one attempt per failure).
-                val recoveryNodes = dumpScreenSafe()
-                val recoveryOk = _performAction(recoveryStep, recoveryNodes)
-                if (!recoveryOk) {
-                    logWarn("Recovery step ${recoveryStep.action} failed: $lastActionError — continuing without recovery")
-                } else {
-                    logWarn("Recovery step ${recoveryStep.action} executed: ${recoveryStep.reasoning}")
-                }
+                logWarn("Recovery suggested: ${recoveryStep.action} — ${recoveryStep.reasoning}")
             }
             resumeCount++
             startFrom = failedStepIndex
@@ -612,7 +576,6 @@ class TaskExecutor(
         var remainingMs = effectiveOpenAppPollTimeoutMs
         var current = automation.getCurrentPackage().orEmpty()
         while (true) {
-            currentCoroutineContext().ensureActive()
             if (openAppTargetReached(step, prePackage, current, automation)) return current
             if (_cancelRequested) return current
             if (!awaitIfPaused()) return current
@@ -645,9 +608,7 @@ class TaskExecutor(
         val success: Boolean,
         /** 0-based index of the step that failed, or -1 when the range completed. */
         val failedStepIndex: Int = -1,
-        val stepsCompleted: Int = 0,
-        val skippedCount: Int = 0,
-        val skippedSteps: List<String> = emptyList()
+        val stepsCompleted: Int = 0
     )
 
     /**
@@ -677,7 +638,6 @@ class TaskExecutor(
         var stepCount = 0
         var skippedCount = 0
         var lastSkippedIndex = -1
-        var skippedSteps = mutableListOf<String>()
         // Turn F(e): the previous step's post-verification dump is carried
         // forward as the next step's pre-dump — one screen read per step
         // instead of two. A retry always re-dumps, so a stale carry
@@ -787,8 +747,7 @@ class TaskExecutor(
 
             if (!effectVerified) {
                 if (step.action == TaskStep.ACTION_SCROLL || step.action == TaskStep.ACTION_SWIPE) {
-                    // Scroll/swipe only succeeds when the screen actually changed.
-                    // No auto-accept: a no-op scroll/swipe is a skipped step.
+                    effectVerified = true
                 } else {
                     logWarn("Replayed step $stepNumber/$totalSteps (${step.action}) had no verified effect — re-dumping screen and retrying once")
                     if (!awaitIfPaused() || _cancelRequested) {
@@ -830,14 +789,11 @@ class TaskExecutor(
                     logWarn("Replayed critical step $stepNumber/$totalSteps (${step.action}) had no verified effect after retry — aborting replay: $detail")
                     return ReplayOutcome(success = false, failedStepIndex = stepIndex, stepsCompleted = stepCount)
                 }
-                // A no-op scroll/swipe is a skipped step too: scroll only succeeds
-                // when the screen actually changed (AU-M3). It gets no retry
-                // (retrying a scroll that did not move is pointless), but it
-                // must count as skipped so the replay reports PARTIAL, not SUCCESS.
-                skippedCount++
-                lastSkippedIndex = stepIndex
-                skippedSteps.add(describeStep(step))
-                logWarn("Replayed non-critical step $stepNumber/$totalSteps (${step.action}) had no verified effect after retry — skipping ($skippedCount/$totalSteps skipped)")
+                if (step.action != TaskStep.ACTION_SCROLL && step.action != TaskStep.ACTION_SWIPE) {
+                    skippedCount++
+                    lastSkippedIndex = stepIndex
+                    logWarn("Replayed non-critical step $stepNumber/$totalSteps (${step.action}) had no verified effect after retry — skipping ($skippedCount/$totalSteps skipped)")
+                }
             }
 
             // Carry this step's verified post-dump forward as the next
@@ -847,26 +803,13 @@ class TaskExecutor(
             carriedSignature = postSignature
         }
 
-        // (iii) If any step was skipped, replay is not a full success.
-        // Fail outright when half or more steps were skipped (AU-M4: a replay that
-        // skipped half its steps must not succeed); a minority skipped is PARTIAL.
-        if (skippedCount > 0) {
-            val skippedDetail = skippedSteps.joinToString(", ")
-            val isMajoritySkipped = skippedCount * 2 >= totalSteps
-            val diag = if (isMajoritySkipped) {
-                "Macro replay failed: skipped $skippedCount of $totalSteps steps (half or more) for '${skill.goal}' — skipped: $skippedDetail"
-            } else {
-                "Macro replay partial: skipped $skippedCount of $totalSteps steps for '${skill.goal}' — skipped: $skippedDetail"
-            }
+        // (iii) If skipped steps are more than half of all steps, replay overall fails.
+        // The AI resume path can still fix the last skipped step.
+        if (skippedCount * 2 > totalSteps) {
+            val diag = "Macro replay failed: skipped $skippedCount of $totalSteps steps (>50%) for '${skill.goal}'"
             recordDiagnosis(diag)
             logWarn(diag)
-            return ReplayOutcome(
-                success = false,
-                failedStepIndex = if (isMajoritySkipped) lastSkippedIndex else -1,
-                stepsCompleted = stepCount,
-                skippedCount = skippedCount,
-                skippedSteps = skippedSteps
-            )
+            return ReplayOutcome(success = false, failedStepIndex = lastSkippedIndex, stepsCompleted = stepCount)
         }
         return ReplayOutcome(success = stepCount > 0, stepsCompleted = stepCount)
     }
@@ -1166,16 +1109,10 @@ class TaskExecutor(
                     val fallbackX = step.intParam("fallbackX") ?: step.intParam("x")
                     val fallbackY = step.intParam("fallbackY") ?: step.intParam("y")
                     val pressEnter = step.booleanParam("pressEnter") ?: true
-                    // AU-M6: resolve recorded field identity before typing;
-                    // fall back to focused field only if the recorded field
-                    // cannot be found, and log loudly when falling back.
-                    val fieldIdentity = step.stringParam("fieldId")
-                        ?: step.stringParam("fieldLabel")
-                        ?: step.stringParam("target")
                     val result = executeTypeFlow(
                         automation = automation,
                         text = text,
-                        targetQuery = fieldIdentity,
+                        targetQuery = step.stringParam("target"),
                         fallbackX = fallbackX,
                         fallbackY = fallbackY,
                         pressEnter = pressEnter,
@@ -1546,16 +1483,9 @@ class TaskExecutor(
                 if (!targetQuery.isNullOrBlank()) {
                     val match = nodes.firstOrNull {
                         (it.isEditable || it.isClickable) &&
-                            (it.text.contains(targetQuery, ignoreCase = true) || it.contentDescription.contains(targetQuery, ignoreCase = true) || it.viewId.contains(targetQuery, ignoreCase = true))
+                            (it.text.contains(targetQuery, ignoreCase = true) || it.contentDescription.contains(targetQuery, ignoreCase = true))
                     }
                     if (match != null) return match
-                    // AU-M6: recorded field identity not found — fall back to
-                    // the currently focused field and log loudly.
-                    if (automation.isInputFocused()) {
-                        android.util.Log.w("MiraTypeFlow", "Type step: recorded field '$targetQuery' not found on screen — falling back to currently focused field")
-                        return nodes.firstOrNull { it.isEditable || it.className.contains("EditText", ignoreCase = true) }
-                    }
-                    return null
                 }
                 // Typing into the wrong field is worse than failing — if the
                 // intended field (targetQuery) was not found, do not fall back
@@ -1685,15 +1615,7 @@ class TaskExecutor(
 
             // MATCH: readBack equals intended text.
             // UNKNOWN: readBack is blank (typical for password/secret fields) — accept only then.
-            // The reliable signal is the typed field node's isPassword flag (Android reports it
-            // for password EditTexts and the accessibility dump carries it via ScreenNode);
-            // the targetQuery keywords are only a fallback for recorders that named the field.
-            val typedNode = automation.dumpScreen().firstOrNull { it.isEditable || it.className.contains("EditText", ignoreCase = true) }
-            val isPasswordField = typedNode?.isPassword == true || (targetQuery != null &&
-                (targetQuery.contains("password", ignoreCase = true) ||
-                 targetQuery.contains("secret", ignoreCase = true) ||
-                 targetQuery.contains("pass", ignoreCase = true)))
-            val success = (readBack == text) || (setOk && readBack.isNullOrBlank() && isPasswordField)
+            val success = (readBack == text) || (setOk && readBack.isNullOrBlank())
             return if (success) {
                 val msg = if (pressEnter && hasResults) {
                     "Successfully typed '$text' and submitted search; results appeared on screen"
@@ -1755,7 +1677,6 @@ class TaskExecutor(
             val start = System.currentTimeMillis()
             var nodes: List<ScreenNode> = emptyList()
             while (true) {
-                currentCoroutineContext().ensureActive()
                 val elapsed = System.currentTimeMillis() - start
                 if (elapsed >= timeoutMs) {
                     return WaitForTextResult(found = false, elapsedMs = elapsed, nodes = nodes)

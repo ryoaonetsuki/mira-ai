@@ -47,24 +47,22 @@ internal fun calculateAudioLevel(pcmData: ByteArray): Float {
  */
 object EchoGate {
     /**
-     * Safety multiplier over playback level.
+     * Safety multiplier over playback level (+3.5 dB).
      *
-     * The gate sees POST-AEC audio (platform AEC + WebRTC AEC3 already ran upstream), so the
-     * residual echo it must block is far below raw speaker-to-mic coupling. The ratio is kept
-     * well below 1.0 (0.3f) so normal near-field user speech (~0.1-0.2 RMS) can barge in during
-     * loud playback instead of being dropped. Residual echo that slips past the gate is caught
-     * by WebRTC AEC3 and the transcript-echo filter (VoiceEchoDetector).
+     * Acoustic coupling from the device loudspeaker into the microphone is physically < 1.0.
+     * A ratio of 1.5f provides a 50% safety margin above direct coupling to prevent acoustic
+     * resonance and echo peaks from triggering Gemini VAD, while easily permitting deliberate
+     * near-field barge-in interruptions by the user.
      */
-    const val RATIO: Float = 0.3f
+    const val RATIO: Float = 1.5f
 
     /**
      * Absolute noise floor in normalized RMS [0.0, 1.0].
      *
      * Prevents low-level room noise or microphone hiss (~0.01 - 0.03) from leaking through
      * during inter-word pauses or quiet playback moments when botLevel approaches 0.
-     * Lowered to 0.02f so quiet barge-in is not rejected by the floor.
      */
-    const val FLOOR: Float = 0.02f
+    const val FLOOR: Float = 0.05f
 
     /**
      * Half-life in milliseconds for exponential bot playback level decay (-6 dB per 150ms).

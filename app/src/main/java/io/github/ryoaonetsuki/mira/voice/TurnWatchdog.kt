@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import io.github.ryoaonetsuki.mira.voice.pipecat.SessionManagerState
 
 enum class WatchdogState {
     IDLE,
@@ -74,22 +75,26 @@ class TurnWatchdog(
     var armedDeadlineMs: Long = 0L
         private set
 
+    var sessionId: String? = null
+        private set
+
     private var job: Job? = null
 
     fun setOnFire(callback: (text: String) -> Unit) {
         onFireCallback = callback
     }
 
-    fun arm(text: String, deadlineMs: Long = if (kind == WatchdogKind.USER_TURN) DEFAULT_USER_TURN_TIMEOUT_MS else DEFAULT_POST_CALL_TIMEOUT_MS) {
+    fun arm(text: String, deadlineMs: Long = if (kind == WatchdogKind.USER_TURN) DEFAULT_USER_TURN_TIMEOUT_MS else DEFAULT_POST_CALL_TIMEOUT_MS, sessionId: String? = null) {
         cancel()
         armedText = text
         armedDeadlineMs = deadlineMs
+        this.sessionId = sessionId
         state = WatchdogState.ARMED
         val s = scope
         if (s != null) {
             job = s.launch {
                 delay(deadlineMs)
-                fire()
+                fire(sessionId)
             }
         }
     }
@@ -102,8 +107,14 @@ class TurnWatchdog(
         }
     }
 
-    fun fire() {
+    fun fire(expectedSessionId: String? = null) {
         if (state != WatchdogState.ARMED) return
+        if (sessionId != null && sessionId != expectedSessionId) {
+            state = WatchdogState.IDLE
+            job?.cancel()
+            job = null
+            return
+        }
         state = WatchdogState.FIRED
         job?.cancel()
         job = null
@@ -113,6 +124,7 @@ class TurnWatchdog(
 
     companion object {
         const val DEFAULT_USER_TURN_TIMEOUT_MS: Long = 5000L
+        const val DEFAULT_USER_TURN_TIMEOUT_NO_TOOL_MS: Long = 15000L
         const val DEFAULT_POST_CALL_TIMEOUT_MS: Long = 8000L
 
         fun formatPostCallNudge(outcome: String): String =
@@ -166,4 +178,27 @@ class TurnWatchdog(
             }
         }
     }
+}
+
+/**
+ * Pure decision: suppress the user-turn nudge when a function call is in flight.
+ * No Android imports — JVM-testable with plain values.
+ */
+internal fun shouldSuppressNudgeWhileInFlight(inFlightCallCount: Int): Boolean {
+    return inFlightCallCount > 0
+}
+
+/**
+ * Pure decision: allow escalation/reconnect only when no function call is in flight.
+ */
+internal fun shouldEscalateWhileInFlight(inFlightCallCount: Int): Boolean {
+    return inFlightCallCount == 0
+}
+
+/**
+ * Pure decision: run the disconnected direct path only when the session is dead
+ * (STOPPED or ERROR). Skip while RECONNECTING or CONFIGURING to wait for resumption.
+ */
+internal fun shouldRunDisconnectedDirectPath(sessionState: SessionManagerState): Boolean {
+    return sessionState == SessionManagerState.STOPPED || sessionState == SessionManagerState.ERROR
 }

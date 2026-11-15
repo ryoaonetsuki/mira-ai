@@ -34,7 +34,7 @@ internal suspend fun executeMemoryTool(
                 if (VoiceMemoryPreload.isSensitiveFact(fact)) {
                     return Value.Object(
                         "result" to Value.Str("Not saved: that looks like a password, code or card number."),
-                        "success" to Value.Bool(false)
+                        "success" to Value.Bool(true)
                     )
                 }
 
@@ -112,19 +112,17 @@ internal suspend fun executeMemoryTool(
                     )
                 }
 
-                val entity = db.memoryDao().getMemoryByContent(fact)
-                if (entity != null) {
-                    db.memoryDao().deleteMemory(entity)
-                    Value.Object(
-                        "result" to Value.Str("Deleted 1 saved memory."),
-                        "success" to Value.Bool(true)
-                    )
+                val deleted = db.memoryDao().deleteMemoriesContaining(fact)
+                val result = if (deleted > 0) {
+                    "Deleted $deleted saved memories."
                 } else {
-                    Value.Object(
-                        "result" to Value.Str("No saved memories matched that."),
-                        "success" to Value.Bool(true)
-                    )
+                    "No saved memories matched that."
                 }
+
+                Value.Object(
+                    "result" to Value.Str(result),
+                    "success" to Value.Bool(true)
+                )
             }
 
             else -> null

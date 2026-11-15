@@ -161,7 +161,7 @@ class DefaultSessionClientFactory : SessionClientFactory {
  * - Exponential backoff reconnection schedule (1s, 2s, 3s, 4s, 5s; max 5 retries).
  * - Proactive GoAway reconnection with stored handle.
  * - Stage-4 silence watchdog (15s setupComplete timeout).
- * - Free-tier concurrency guard (max 1 concurrent session).
+ * - Free-tier concurrency guard (max 3 concurrent sessions).
  * - Audio continuity (drop audio silently during RECONNECTING).
  * - Dev GoAway simulation trigger for diagnostic testing.
  */
@@ -211,14 +211,6 @@ class GeminiSessionManager(
 
     private val _audioLevel = MutableStateFlow(0f)
     val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
-
-    private val _userAudioLevel = MutableStateFlow(0f)
-    val userAudioLevel: StateFlow<Float> = _userAudioLevel.asStateFlow()
-
-    private val _remoteAudioLevel = MutableStateFlow(0f)
-    val remoteAudioLevel: StateFlow<Float> = _remoteAudioLevel.asStateFlow()
-
-    val sessionId: String = java.util.UUID.randomUUID().toString()
 
     private var currentClient: SessionClient? = null
     private var stage4WatchdogJob: Job? = null
@@ -362,9 +354,6 @@ class GeminiSessionManager(
         currentClient?.sendFunctionResponse(id, name, response)
     }
 
-    /** Returns the number of in-flight function calls. */
-    fun activeFunctionCallCount(): Int = activeFunctionCalls.get()
-
     private fun closeCurrentClient() {
         val client = currentClient
         currentClient = null
@@ -453,7 +442,6 @@ class GeminiSessionManager(
                 if (epoch != currentEpoch.get()) return
                 if (_state.value == SessionManagerState.CONNECTED) {
                     _audioLevel.value = level
-                    _userAudioLevel.value = level
                     listener.onAudioLevel(level)
                 }
             }
@@ -462,7 +450,6 @@ class GeminiSessionManager(
                 if (epoch != currentEpoch.get()) return
                 if (_state.value == SessionManagerState.CONNECTED) {
                     _audioLevel.value = level
-                    _remoteAudioLevel.value = level
                     listener.onAudioLevel(level)
                 }
             }

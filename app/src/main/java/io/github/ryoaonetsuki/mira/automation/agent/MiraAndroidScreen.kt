@@ -95,20 +95,6 @@ class MiraAndroidScreen(private val service: MiraAccessibilityService) : MiraScr
     }
 
     override suspend fun peek(): MiraScreenSnapshot {
-        if (lastRead != null && lastSnapshotId != null) {
-            val read = lastRead!!
-            val id = lastSnapshotId!!
-            val (w, h) = dimensions()
-            return MiraScreenSnapshot(
-                snapshotId = id,
-                packageName = read.topPackage,
-                elements = read.entries.map { it.element },
-                width = w,
-                height = h,
-                protected = protectedFlag,
-                hasWindow = read.hasAppWindow,
-            )
-        }
         val (w, h) = dimensions()
         val read = MikaScreenReader.read(service.windows, w, h)
         lastRead = read
@@ -273,7 +259,7 @@ class MiraAndroidScreen(private val service: MiraAccessibilityService) : MiraScr
         launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         if (cold) launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
         service.startActivity(launchIntent)
-        val deadline = System.currentTimeMillis() + 8000L
+        val deadline = System.currentTimeMillis() + 3000L
         while (System.currentTimeMillis() < deadline) {
             val top = MikaScreenReader.topPackage(service.windows)
             if (top == packageName) return MiraActionResult.Ok(appSwitched = top)

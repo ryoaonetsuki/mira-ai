@@ -42,6 +42,15 @@ object VoiceTurnRouter {
     fun isEcho(userText: String, recentModelSpeech: List<String>): Boolean =
         recentModelSpeech.any { VoiceEchoDetector.matchesEcho(userText, it) }
 
+    /**
+     * SINGLE-VOICE INVARIANT. The separate Gemini TTS voice may speak only when
+     *  - NO Live session is connected (then it is the only voice, not a second one), AND
+     *  - the speech is user-initiated (the user asked this turn, or a requested action completed).
+     * While Live is connected, the Live model speaks directly.
+     */
+    fun mayUseFallbackTts(liveConnected: Boolean, userInitiated: Boolean): Boolean =
+        !liveConnected && userInitiated
+
     /** An automation result may be announced only if it came from an explicit user command in this session. */
     fun mayAnnounceAutomationResult(goalFromUserCommand: Boolean): Boolean = goalFromUserCommand
 }

@@ -100,11 +100,11 @@ data class MiraGeminiServiceOptions(
                                 "properties" to Value.Object(
                                     "x" to Value.Object(
                                         "type" to Value.Str("NUMBER"),
-                                        "description" to Value.Str("X coordinate in screen pixels")
+                                        "description" to Value.Str("X coordinate in screen pixels or 0-1000 scale")
                                     ),
                                     "y" to Value.Object(
                                         "type" to Value.Str("NUMBER"),
-                                        "description" to Value.Str("Y coordinate in screen pixels")
+                                        "description" to Value.Str("Y coordinate in screen pixels or 0-1000 scale")
                                     )
                                 ),
                                 "required" to Value.Array(Value.Str("x"), Value.Str("y"))
@@ -326,7 +326,7 @@ data class MiraGeminiServiceOptions(
          * - model: models/gemini-3.8-live
          * - generationConfig.responseModalities: ["AUDIO"]
          * - speechConfig: prebuiltVoiceConfig.voiceName + languageCode
-         * - realtimeInputConfig: automaticActivityDetection (start HIGH sensitivity, end HIGH sensitivity, 800ms silence, 300ms prefix padding)
+         * - realtimeInputConfig: automaticActivityDetection (HIGH sensitivity, 800ms silence)
          * - inputAudioTranscription: {}
          * - outputAudioTranscription: {}
          * - sessionResumption: {} (fresh) or { "handle": storedHandle } (resumption)
@@ -359,10 +359,8 @@ data class MiraGeminiServiceOptions(
 
             val realtimeInputConfig = Value.Object(
                 "automaticActivityDetection" to Value.Object(
-                    "startOfSpeechSensitivity" to Value.Str("START_SENSITIVITY_HIGH"),
                     "endOfSpeechSensitivity" to Value.Str("END_SENSITIVITY_HIGH"),
-                    "silenceDurationMs" to Value.Number(800.0),
-                    "prefixPaddingMs" to Value.Number(300.0)
+                    "silenceDurationMs" to Value.Number(800.0)
                 )
             )
 

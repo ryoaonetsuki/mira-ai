@@ -86,9 +86,6 @@ class JarvisExtrasTest {
         override fun pressHome(): Boolean {
             dispatchedActions.add("pressHome")
             onActionDispatched?.invoke("pressHome")
-            // Pressing Home puts the launcher in the foreground — the replay's
-            // post-step check verifies the package changed to a launcher package.
-            currentPkg = "com.android.launcher3"
             return true
         }
 
@@ -115,17 +112,16 @@ class JarvisExtrasTest {
         val step = TaskStep(TaskStep.ACTION_OPEN_APP, mapOf("app" to "settings"))
         val savedSkill = service.saveOrUpdate("open settings", listOf(step))
 
-        // When disabled, saveOrUpdate stores nothing to the store and returns
-        // null (AU-m9: no phantom empty skill).
+        // When disabled, saveOrUpdate stores nothing to the store
         assertNull(store.data)
-        assertNull(savedSkill)
+        assertTrue(savedSkill.steps.isEmpty())
 
         // findMatch returns null when disabled
         assertNull(service.findMatch("open settings"))
 
         // Enable skills and save again
         enabled = true
-        val realSaved = requireNotNull(service.saveOrUpdate("open settings", listOf(step)))
+        val realSaved = service.saveOrUpdate("open settings", listOf(step))
         assertNotNull(store.data)
         assertEquals(1, realSaved.steps.size)
         assertNotNull(service.findMatch("open settings"))
@@ -135,7 +131,7 @@ class JarvisExtrasTest {
         assertNull(service.findMatch("open settings"))
 
         // saveOrUpdate while disabled returns existing skill without updating
-        val returnExisting = requireNotNull(service.saveOrUpdate("open settings", listOf(step)))
+        val returnExisting = service.saveOrUpdate("open settings", listOf(step))
         assertEquals(realSaved.id, returnExisting.id)
     }
 

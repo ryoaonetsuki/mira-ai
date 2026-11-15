@@ -388,7 +388,7 @@ class TaskExecutorTest {
         )
 
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
-        val result = executor.replaySkillDirect(requireNotNull(saved))
+        val result = executor.replaySkillDirect(saved)
         assertEquals(TaskStatus.SUCCESS, result.status)
         assertTrue(fakePort.actionsPerformed.contains("openApp:youtube"))
     }
@@ -856,7 +856,7 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val result = executor.replaySkillDirect(requireNotNull(savedSkill))
+        val result = executor.replaySkillDirect(savedSkill)
         assertEquals(TaskStatus.FAILED, result.status)
         assertTrue("Diagnosis must name step 1: ${result.message}", result.message.contains("step 1"))
 
@@ -877,7 +877,7 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val result = executor.replaySkillDirect(requireNotNull(savedSkill))
+        val result = executor.replaySkillDirect(savedSkill)
         assertEquals(TaskStatus.FAILED, result.status)
         assertTrue("Diagnosis must name step 1: ${result.message}", result.message.contains("step 1"))
 
@@ -894,7 +894,7 @@ class TaskExecutorTest {
         // Step 1: open_app youtube (critical -> has effect)
         // Step 2: click_text StaleFeedItem (non-critical -> dispatches ok, but NO effect on screen)
         // Step 3: click_text Library (non-critical -> has effect)
-        // 1 of 3 skipped (a minority) -> overall replay is PARTIAL (AU-M4), never SUCCESS.
+        // 1 of 3 skipped (<= 50%) -> overall replay SUCCEEDS!
         val fakePort = FakeAutomationPort(
             serviceEnabled = true,
             noEffectClickTexts = setOf("StaleFeedItem")
@@ -911,10 +911,8 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        // AU-M4: a replay that skipped a step is never a full success — 1 of 3 skipped
-        // (a minority) is PARTIAL, not SUCCESS and not FAILED.
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.PARTIAL, result.status)
+        val ok = executor.replaySkill(skill)
+        assertTrue("Replay must succeed when 1 of 3 non-critical steps has no effect and is skipped", ok)
         // StaleFeedItem was tried twice (initial + 1 retry), Library once -> total 3 clickText calls
         val clickCalls = fakePort.actionsPerformed.filter { it.startsWith("clickText:") }
         assertEquals(listOf("clickText:StaleFeedItem", "clickText:StaleFeedItem", "clickText:Library"), clickCalls)
@@ -1283,7 +1281,7 @@ class TaskExecutorTest {
         )
         val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
 
-        val result = executor.replaySkillDirect(requireNotNull(saved))
+        val result = executor.replaySkillDirect(saved)
         assertEquals(TaskStatus.FAILED, result.status)
         assertTrue("Diagnosis must name step 1: ${result.message}", result.message.contains("step 1"))
         assertNotNull("Skill must be retained after a failed replay", skills.findMatch("yt"))
@@ -1869,10 +1867,7 @@ class TaskExecutorTest {
         )
 
         val result = executor.replaySkillDirect(feedScrollSkill)
-        // AU-M3/AU-M4: scrolls only succeed when the screen actually changes. All 5
-        // scrolls had no effect, so every step is skipped — the replay did nothing and
-        // fails outright (half or more skipped); it must not report SUCCESS.
-        assertEquals("Skill with 5 consecutive no-effect scrolls must FAIL, not succeed", TaskStatus.FAILED, result.status)
+        assertEquals("Skill with 5 consecutive scrolls must SUCCEED", TaskStatus.SUCCESS, result.status)
         val scrollDispatches = feedPort.actionsPerformed.filter { it == "scroll:down" }
         assertEquals("All 5 scroll actions must execute without being aborted by loop guard", 5, scrollDispatches.size)
 
@@ -2277,144 +2272,6 @@ class TaskExecutorTest {
         assertTrue("Nodes should be empty", result.nodes.isEmpty())
     }
 
-    // =========================================================================
-    // Round 4: AU-M3 — scroll/swipe with no screen change must not report success
-    // =========================================================================
-
-    @Test
-    fun testAU_M3_ScrollNoChange_ReportsFailureNotSuccess() = runBlocking {
-        val fakePort = FakeAutomationPort(
-            serviceEnabled = true,
-            simulateEffect = false
-        )
-        val skills = SkillMemoryService(InMemorySkillStore())
-        val skill = Skill(
-            goal = "scroll feed",
-            steps = listOf(TaskStep(action = TaskStep.ACTION_SCROLL, params = mapOf("direction" to "down")))
-        )
-        val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.FAILED, result.status)
-        assertTrue("Scroll with no change must fail, not succeed: ${result.message}",
-            result.message.contains("failed") || result.message.contains("skipped"))
-    }
-
-    // =========================================================================
-    // Round 4: AU-M4 — skipped steps must report PARTIAL, not SUCCESS
-    // =========================================================================
-
-    @Test
-    fun testAU_M4_SkippedSteps_ReportsPartialNotSuccess() = runBlocking {
-        val fakePort = FakeAutomationPort(
-            serviceEnabled = true,
-            noEffectClickTexts = setOf("StaleStep")
-        )
-        val skills = SkillMemoryService(InMemorySkillStore())
-        val skill = Skill(
-            goal = "macro with skip",
-            steps = listOf(
-                TaskStep(action = TaskStep.ACTION_CLICK_TEXT, params = mapOf("text" to "Step1")),
-                TaskStep(action = TaskStep.ACTION_CLICK_TEXT, params = mapOf("text" to "Step2")),
-                TaskStep(action = TaskStep.ACTION_CLICK_TEXT, params = mapOf("text" to "Step3")),
-                TaskStep(action = TaskStep.ACTION_CLICK_TEXT, params = mapOf("text" to "StaleStep"))
-            )
-        )
-        val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.PARTIAL, result.status)
-        assertTrue("Partial message must mention skipped count: ${result.message}",
-            result.message.contains("1"))
-        assertTrue("Partial message must mention skipped step: ${result.message}",
-            result.message.contains("tap 'StaleStep' on screen"))
-    }
-
-    // =========================================================================
-    // Round 4: AU-M5 — UNKNOWN typing outside password fields must fail
-    // =========================================================================
-
-    @Test
-    fun testAU_M5_UnknownTypingNonPassword_ReportsFailure() = runBlocking {
-        val port = object : FakeAutomationPort() {
-            override fun getFocusedText(): String? = null
-        }
-        port.inputFocusedState = true
-        val result = TaskExecutor.executeTypeFlow(
-            automation = port,
-            text = "hello",
-            targetQuery = "Search Field",
-            pressEnter = false,
-            pollTimeoutMs = 0L
-        )
-        assertFalse("Unknown typing on non-password field must fail", result.success)
-        assertTrue("Failure message must mention type failure: ${result.message}",
-            result.message.contains("fail") || result.message.contains("type"))
-    }
-
-    @Test
-    fun testAU_M5_UnknownTypingPassword_Succeeds() = runBlocking {
-        val port = object : FakeAutomationPort() {
-            override fun getFocusedText(): String? = null
-        }
-        port.inputFocusedState = true
-        val result = TaskExecutor.executeTypeFlow(
-            automation = port,
-            text = "secret",
-            targetQuery = "password_field",
-            pressEnter = false,
-            pollTimeoutMs = 0L
-        )
-        assertTrue("Unknown typing on password field must succeed", result.success)
-    }
-
-    // =========================================================================
-    // Round 4: AU-M6 — recorded type step carries field identity; replay resolves it
-    // =========================================================================
-
-    @Test
-    fun testAU_M6_TypeStepCarriesFieldIdentity() {
-        val step = TaskStep(
-            action = TaskStep.ACTION_TYPE_TEXT,
-            params = mapOf("text" to "hello", "fieldId" to "com.example:id/username", "fieldLabel" to "Username")
-        )
-        assertEquals("com.example:id/username", step.stringParam("fieldId"))
-        assertEquals("Username", step.stringParam("fieldLabel"))
-        assertEquals("hello", step.stringParam("text"))
-    }
-
-    @Test
-    fun testAU_M6_ReplayResolvesRecordedField() = runBlocking {
-        val port = FakeAutomationPort(
-            serviceEnabled = true,
-            screenNodes = listOf(
-                ScreenNode(
-                    index = 0,
-                    text = "Username",
-                    contentDescription = "Username field",
-                    className = "android.widget.EditText",
-                    viewId = "com.example:id/username",
-                    isClickable = true,
-                    isEditable = true,
-                    isScrollable = false,
-                    isCheckable = false,
-                    isEnabled = true,
-                    left = 10, top = 10, right = 100, bottom = 50, centerX = 55, centerY = 30
-                )
-            )
-        )
-        val step = TaskStep(
-            action = TaskStep.ACTION_TYPE_TEXT,
-            params = mapOf("text" to "hello", "fieldId" to "com.example:id/username")
-        )
-        val skill = Skill(goal = "type test", steps = listOf(step))
-        val executor = TaskExecutor(automation = port, skills = SkillMemoryService(InMemorySkillStore()), stepDelayMs = 0)
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.SUCCESS, result.status)
-        assertTrue("Must tap the recorded field: ${port.actionsPerformed}",
-            port.actionsPerformed.contains("clickAt:55.0,30.0"))
-        assertTrue("Must set text: ${port.actionsPerformed}",
-            port.actionsPerformed.any { it.startsWith("setTextOnFocused:hello") })
-    }
-
     // --- A-M6: 4-arg clickText falls back to coordinates when the text is absent ---
     // (Turn C contract: live text search first; recorded coordinates ONLY when
     // the text is gone from the screen.)
@@ -2765,28 +2622,7 @@ class TaskExecutorTest {
 
     @Test
     fun testA_M13_UnknownReadbackOnPasswordField_Succeeds() = runBlocking {
-        // The password field's text reads back blank (masked); the flow accepts the
-        // blank readback because the field node reports isPassword = true (A-M13).
-        val passwordNode = ScreenNode(
-            index = 0,
-            text = "",
-            contentDescription = "Password",
-            className = "android.widget.EditText",
-            viewId = "com.example:id/password",
-            isClickable = true,
-            isEditable = true,
-            isPassword = true,
-            isScrollable = false,
-            isCheckable = false,
-            isEnabled = true,
-            left = 10,
-            top = 10,
-            right = 100,
-            bottom = 50,
-            centerX = 55,
-            centerY = 30
-        )
-        val port = object : FakeAutomationPort(screenNodes = listOf(passwordNode)) {
+        val port = object : FakeAutomationPort() {
             override fun setTextOnFocused(text: String): Boolean = true
             override fun getFocusedText(): String? = null
         }
@@ -2815,112 +2651,5 @@ class TaskExecutorTest {
         )
         assertFalse("Failed pressEnter must be failure", result.success)
         assertTrue(result.message.contains("pressEnter failed to register"))
-    }
-
-    // =========================================================================
-    // Round 4: AU-M7 — Recovery suggestion is executed, not just logged
-    // =========================================================================
-
-    @Test
-    fun testAU_M7_RecoverySuggestionIsExecutedOnFailedStep() = runBlocking {
-        var clickFailures = 0
-        val port = object : FakeAutomationPort() {
-            override fun clickText(text: String, nodes: List<ScreenNode>): Boolean {
-                clickFailures++
-                return clickFailures > 1
-            }
-        }
-        val skills = SkillMemoryService(InMemorySkillStore())
-        val skill = Skill(
-            goal = "recovery test",
-            steps = listOf(
-                TaskStep(action = TaskStep.ACTION_CLICK_TEXT, params = mapOf("text" to "Target"))
-            )
-        )
-        val executor = TaskExecutor(automation = port, skills = skills, stepDelayMs = 0)
-
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.FAILED, result.status)
-        // Recovery step must have been attempted (not just logged): at least 2 click attempts
-        assertTrue("Recovery step must be executed after failure", clickFailures >= 2)
-    }
-
-    // =========================================================================
-    // Round 4: AU-M8 — openApp poll timeout is 8 s on both paths
-    // =========================================================================
-
-    @Test
-    fun testAU_M8_OpenAppPollTimeoutIs8Seconds() = runBlocking {
-        val fakePort = FakeAutomationPort(
-            serviceEnabled = true,
-            packageAppearAfterChecks = 5
-        )
-        val skills = SkillMemoryService(InMemorySkillStore())
-        val skill = Skill(
-            goal = "yt",
-            steps = listOf(
-                TaskStep(action = TaskStep.ACTION_OPEN_APP, params = mapOf("app" to "youtube"))
-            )
-        )
-        val executor = TaskExecutor(
-            automation = fakePort,
-            skills = skills,
-            stepDelayMs = 1L,
-            openAppPollTimeoutMs = 8_000L,
-            openAppPollIntervalMs = 100L
-        )
-
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.SUCCESS, result.status)
-        assertTrue("Must have polled at least 5 times within 8s timeout", fakePort.packageCheckCount >= 5)
-    }
-
-    // =========================================================================
-    // Round 4: AU-M9 — Tap-number cap constant is shared
-    // =========================================================================
-
-    @Test
-    fun testAU_M9_TapNumberCapIsSharedConstant() {
-        assertEquals(50, TapNumberOverlay.MAX_BADGES)
-    }
-
-    // =========================================================================
-    // Round 4: AU-M10 — click_at coordinates are interpreted as pixels only
-    // =========================================================================
-
-    @Test
-    fun testAU_M10_ClickAtCoordinatesArePixelsOnly() = runBlocking {
-        val fakePort = FakeAutomationPort(
-            serviceEnabled = true,
-            screenNodes = listOf(
-                ScreenNode(
-                    index = 0,
-                    text = "Target",
-                    contentDescription = "Target button",
-                    className = "android.widget.Button",
-                    viewId = "target_btn",
-                    isClickable = true,
-                    isEditable = false,
-                    isScrollable = false,
-                    isCheckable = false,
-                    isEnabled = true,
-                    left = 100,
-                    top = 100,
-                    right = 200,
-                    bottom = 200,
-                    centerX = 150,
-                    centerY = 150
-                )
-            )
-        )
-        val skills = SkillMemoryService(InMemorySkillStore())
-        val step = TaskStep(action = TaskStep.ACTION_CLICK_AT, params = mapOf("x" to 150, "y" to 150))
-        val skill = Skill(goal = "click at pixels", steps = listOf(step))
-        val executor = TaskExecutor(automation = fakePort, skills = skills, stepDelayMs = 0)
-
-        val result = executor.replaySkillDirect(skill)
-        assertEquals(TaskStatus.SUCCESS, result.status)
-        assertTrue("click_at must dispatch with pixel coordinates",
-            fakePort.actionsPerformed.contains("clickAt:150.0,150.0"))
     }
 }

@@ -40,14 +40,8 @@ class SupabaseClient(
         fun resolveBaseUrl(): String =
             try { BuildConfig.SUPABASE_URL } catch (_: Throwable) { "https://zvnfwlqxdbommtozugzt.supabase.co" }
 
-        fun resolveAnonKey(): String {
-            val key = try { BuildConfig.SUPABASE_ANON_KEY } catch (_: Throwable) { "" }
-            if (key.isBlank()) {
-                Log.e(TAG, "SUPABASE_ANON_KEY is not configured in BuildConfig")
-                throw IllegalStateException("SUPABASE_ANON_KEY is not configured in BuildConfig")
-            }
-            return key
-        }
+        fun resolveAnonKey(): String =
+            try { BuildConfig.SUPABASE_ANON_KEY } catch (_: Throwable) { "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp2bmZ3bHF4ZGJvbW10b3p1Z3p0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM5MTM2NDksImV4cCI6MjEwOTQ4OTY0OX0.uqyERmXVe2GEP2oaU0xc7I9V1ry-43adAEg6jddYBpk" }
     }
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -58,7 +52,7 @@ class SupabaseClient(
 
     suspend fun fetchRemoteConfig(): Result<RemoteAppConfig> = withContext(Dispatchers.IO) {
         try {
-            val url = "$baseUrl/rest/v1/remote_config?order=created_at.desc&limit=1"
+            val url = "$baseUrl/rest/v1/remote_config?id=eq.1"
             val request = Request.Builder()
                 .url(url)
                 .addHeader("apikey", anonKey)

@@ -160,8 +160,6 @@ fun SkillsScreen(
                             context.getString(R.string.skill_execution_cancelled)
                         TaskStatus.FAILED ->
                             context.getString(R.string.skill_execution_failed) + ": " + result.message
-                        TaskStatus.PARTIAL ->
-                            context.getString(R.string.skill_execution_success) + ": Partially completed — " + result.message
                     }
                 }
             } catch (e: Exception) {
@@ -367,12 +365,6 @@ fun SkillsScreen(
                             onCheckedChange = { SkillSettings.getInstance(context).set(it) }
                         )
                     }
-                    Text(
-                        text = "Controls automatic skills only. Tap-to-Run on this screen still works when OFF.",
-                        fontSize = 11.sp,
-                        color = palette.textSecondary,
-                        modifier = Modifier.padding(top = 4.dp, start = 14.dp, end = 14.dp, bottom = 8.dp)
-                    )
                 }
             }
 
@@ -912,7 +904,6 @@ fun SkillsScreen(
                         TaskStatus.SUCCESS -> "SUCCESS" to Color(0xFF10B981)
                         TaskStatus.FAILED -> "FAILED" to Color(0xFFEF4444)
                         TaskStatus.CANCELLED -> "CANCELLED" to Color(0xFFF59E0B)
-                        TaskStatus.PARTIAL -> "PARTIAL" to Color(0xFFFB923C)
                     }
 
                     Surface(
@@ -1129,7 +1120,7 @@ fun SkillsScreen(
                         if (!skillsEnabled) return@Button
                         val name = macroNameInput.trim()
                         if (name.isNotBlank() && recordedStepsToSave.isNotEmpty()) {
-                            val saved = skillMemoryService.saveOrUpdate(name, recordedStepsToSave)
+                            skillMemoryService.saveOrUpdate(name, recordedStepsToSave)
                         }
                         showSaveMacroDialog = false
                     },

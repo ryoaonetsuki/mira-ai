@@ -2,6 +2,7 @@ package io.github.ryoaonetsuki.mira.voice
 
 import io.github.ryoaonetsuki.mira.automation.MiraAutomationBridge
 import io.github.ryoaonetsuki.mira.automation.agent.TaskStep
+import io.github.ryoaonetsuki.mira.voice.pipecat.SessionManagerState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -216,5 +217,66 @@ class TurnWatchdogTest {
         escalator.fire("custom-escalate-reason")
         assertFalse(escalator.isPending)
         assertEquals("custom-escalate-reason", escalatedReason ?: "")
+    }
+
+    @Test
+    fun testShouldSuppressNudgeWhileInFlight_countGreaterThanZero() {
+        assertTrue("Nudge must be suppressed when a function call is in flight", shouldSuppressNudgeWhileInFlight(1))
+        assertTrue("Nudge must be suppressed when multiple function calls are in flight", shouldSuppressNudgeWhileInFlight(5))
+    }
+
+    @Test
+    fun testShouldSuppressNudgeWhileInFlight_countZero() {
+        assertFalse("Nudge must not be suppressed when no function call is in flight", shouldSuppressNudgeWhileInFlight(0))
+    }
+
+    @Test
+    fun testShouldEscalateWhileInFlight_countGreaterThanZero() {
+        assertFalse("Escalator must refuse reconnect when a function call is in flight", shouldEscalateWhileInFlight(1))
+    }
+
+    @Test
+    fun testShouldEscalateWhileInFlight_countZero() {
+        assertTrue("Escalator must allow reconnect when no function call is in flight", shouldEscalateWhileInFlight(0))
+    }
+
+    @Test
+    fun testShouldRunDisconnectedDirectPath_deadStates() {
+        assertTrue("Direct path must run when STOPPED", shouldRunDisconnectedDirectPath(SessionManagerState.STOPPED))
+        assertTrue("Direct path must run when ERROR", shouldRunDisconnectedDirectPath(SessionManagerState.ERROR))
+    }
+
+    @Test
+    fun testShouldRunDisconnectedDirectPath_nonDeadStates() {
+        assertFalse("Direct path must not run when RECONNECTING", shouldRunDisconnectedDirectPath(SessionManagerState.RECONNECTING))
+        assertFalse("Direct path must not run when CONFIGURING", shouldRunDisconnectedDirectPath(SessionManagerState.CONFIGURING))
+        assertFalse("Direct path must not run when CONNECTED", shouldRunDisconnectedDirectPath(SessionManagerState.CONNECTED))
+        assertFalse("Direct path must not run when IDLE", shouldRunDisconnectedDirectPath(SessionManagerState.IDLE))
+    }
+
+    @Test
+    fun testFire_skipsWhenSessionChanged() = runBlocking {
+        var firedText: String? = null
+        val watchdog = TurnWatchdog(
+            scope = this,
+            kind = WatchdogKind.USER_TURN
+        ) { text ->
+            firedText = text
+        }
+
+        watchdog.arm("test transcript", deadlineMs = 40L, sessionId = "session-A")
+        assertEquals(WatchdogState.ARMED, watchdog.state)
+
+        // Fire with a different session ID — must be skipped
+        watchdog.fire("session-B")
+        assertEquals(WatchdogState.IDLE, watchdog.state)
+        assertNull("Fire must be skipped when session changed", firedText)
+
+        // Fire with matching session ID — must proceed
+        watchdog.arm("test transcript 2", deadlineMs = 40L, sessionId = "session-C")
+        assertEquals(WatchdogState.ARMED, watchdog.state)
+        watchdog.fire("session-C")
+        assertEquals(WatchdogState.FIRED, watchdog.state)
+        assertEquals("test transcript 2", firedText)
     }
 }
